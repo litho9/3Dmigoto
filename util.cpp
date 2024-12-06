@@ -7,12 +7,8 @@
 #include <shellscalingapi.h>
 
 // FIXME: Move any dependencies from these headers into common:
-#if MIGOTO_DX == 9
-#include "DirectX9\Overlay.h"
-#elif MIGOTO_DX == 11
 #include "DirectX11\HackerDevice.h"
 #include "DirectX11\HackerContext.h"
-#endif // MIGOTO_DX
 
 // Sometimes game directories get funny permissions that cause us problems. I
 // have no clue how or why this happens, and the usual way to deal with it is
@@ -39,7 +35,7 @@ static SECURITY_ATTRIBUTES* init_security_attributes(SECURITY_ATTRIBUTES *sa)
 {
 	sa->nLength = sizeof(SECURITY_ATTRIBUTES);
 	sa->bInheritHandle = FALSE;
-	sa->lpSecurityDescriptor = NULL;
+	sa->lpSecurityDescriptor = nullptr;
 
 	if (ConvertStringSecurityDescriptorToSecurityDescriptor(
 			L"D:" // Discretionary ACL
@@ -53,36 +49,28 @@ static SECURITY_ATTRIBUTES* init_security_attributes(SECURITY_ATTRIBUTES *sa)
 	}
 
 	LogInfo("ConvertStringSecurityDescriptorToSecurityDescriptor failed\n");
-	return NULL;
+	return nullptr;
 }
 
-BOOL CreateDirectoryEnsuringAccess(LPCWSTR path)
-{
-	SECURITY_ATTRIBUTES sa, *psa = NULL;
-	BOOL ret = false;
-
+BOOL CreateDirectoryEnsuringAccess(LPCWSTR path) {
+	SECURITY_ATTRIBUTES sa, *psa = nullptr;
 	psa = init_security_attributes(&sa);
-
-	ret = CreateDirectory(path, psa);
-
+	const BOOL ret = CreateDirectory(path, psa);
 	LocalFree(sa.lpSecurityDescriptor);
-
 	return ret;
 }
 
-// Replacement for _wfopen_s that ensures the permissions will be set so we can
-// read it back later.
-errno_t wfopen_ensuring_access(FILE** pFile, const wchar_t *filename, const wchar_t *mode)
-{
-	SECURITY_ATTRIBUTES sa, *psa = NULL;
-	HANDLE fh = NULL;
+// Replacement for _wfopen_s that ensures the permissions will be set so we can read it back later.
+errno_t wfopen_ensuring_access(FILE** pFile, const wchar_t *filename, const wchar_t *mode) {
+	SECURITY_ATTRIBUTES sa, *psa = nullptr;
+	HANDLE fh = nullptr;
 	int fd = -1;
-	FILE *fp = NULL;
+	FILE *fp = nullptr;
 	int osf_flags = 0;
 
-	*pFile = NULL;
+	*pFile = nullptr;
 
-	if (wcsstr(mode, L"w") == NULL) {
+	if (wcsstr(mode, L"w") == nullptr) {
 		// This function is for creating new files for now. We could
 		// make it do some heroics on read/append as well, but I don't
 		// want to push this further than we need to.
@@ -90,7 +78,7 @@ errno_t wfopen_ensuring_access(FILE** pFile, const wchar_t *filename, const wcha
 		DoubleBeepExit();
 	}
 
-	if (wcsstr(mode, L"b") == NULL)
+	if (wcsstr(mode, L"b") == nullptr)
 		osf_flags |= _O_TEXT;
 
 	// We use _wfopen_s so that we can use formatted print routines, but to
@@ -139,7 +127,7 @@ void set_file_last_write_time(wchar_t *path, FILETIME *ftWrite, DWORD flags)
 	if (f == INVALID_HANDLE_VALUE)
 		return;
 
-	SetFileTime(f, NULL, NULL, ftWrite);
+	SetFileTime(f, nullptr, nullptr, ftWrite);
 	CloseHandle(f);
 }
 
@@ -172,17 +160,10 @@ std::string NameFromIID(IID id)
 	// FIXME: We should probably have these IIDs defined regardless of target
 	// to catch potential cases where multiple versions of 3DMigoto are
 	// coexisting and the devices get mixed up
-#if MIGOTO_DX == 11
 	if (IID_HackerDevice == id)
 		return "HackerDevice";
 	if (IID_HackerContext == id)
 		return "HackerContext";
-#elif MIGOTO_DX == 9
-	// FIXME: DX9 GUIDs are not using the correct macros, and need verification
-	// that they haven't been copy + pasted
-	//if (IID_D3D9Wrapper_IDirect3DDevice9 == id)
-	//	return "3DMigotoDevice9";
-#endif
 
 #ifdef _D3D9_H_
 	if (__uuidof(IDirect3DDevice9) == id)
@@ -387,7 +368,7 @@ float get_effective_dpi()
 			LogInfo("Obsolete Windows version, SetThreadDpiAwarenessContext() unavailable, effective_dpi will be at the mercy of the process DPI awareness\n");
 		if (fnGetProcessDpiAwareness) {
 			PROCESS_DPI_AWARENESS awareness;
-			fnGetProcessDpiAwareness(NULL, &awareness);
+			fnGetProcessDpiAwareness(nullptr, &awareness);
 			LogInfo("Process DPI Awareness: %u\n", awareness);
 		}
 		init_done = true;
@@ -446,44 +427,6 @@ float get_effective_dpi()
 	return 96.0f;
 }
 
-#if MIGOTO_DX == 9
-void save_om_state(IDirect3DDevice9 *device, struct OMState *state)
-{
-	DWORD i;
-
-	// OMGetRenderTargetAndUnorderedAccessViews is a poorly designed API as
-	// to use it properly to get all RTVs and UAVs we need to pass it some
-	// information that we don't know. So, we have to do a few extra steps
-	// to find that info.
-	D3DCAPS9 caps;
-	device->GetDeviceCaps(&caps);
-	if (state->rtvs.size() != caps.NumSimultaneousRTs)
-		state->rtvs.resize(caps.NumSimultaneousRTs);
-	state->NumRTVs = 0;
-	for (i = 0; i < caps.NumSimultaneousRTs; i++) {
-		IDirect3DSurface9 *rt = NULL;
-		device->GetRenderTarget(i, &rt);
-		state->rtvs[i] = rt;
-		if (rt) {
-			state->NumRTVs = i + 1;
-		}
-	}
-	device->GetDepthStencilSurface(&state->dsv);
-}
-
-void restore_om_state(IDirect3DDevice9 *device, struct OMState *state)
-{
-	UINT i;
-	for (i = 0; i < state->NumRTVs; i++) {
-		device->SetRenderTarget(i, state->rtvs[i]);
-		if (state->rtvs[i])
-			state->rtvs[i]->Release();
-	}
-	device->SetDepthStencilSurface(state->dsv);
-	if (state->dsv)
-		state->dsv->Release();
-}
-#elif MIGOTO_DX == 11
 void save_om_state(ID3D11DeviceContext *context, struct OMState *state)
 {
 	int i;
@@ -509,7 +452,7 @@ void save_om_state(ID3D11DeviceContext *context, struct OMState *state)
 
 	// Finally get all the UAVs. Since we already retrieved the RTVs and
 	// DSV we can skip getting them:
-	context->OMGetRenderTargetsAndUnorderedAccessViews(0, NULL, NULL, state->UAVStartSlot, state->NumUAVs, state->uavs);
+	context->OMGetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, state->UAVStartSlot, state->NumUAVs, state->uavs);
 }
 
 void restore_om_state(ID3D11DeviceContext *context, struct OMState *state)
@@ -559,7 +502,7 @@ static DWORD WINAPI crash_handler_switch_to_window(_In_ LPVOID lpParameter)
 		LogInfo("Attempting emergency switch to windowed mode on swap chain %p\n",
 				last_fullscreen_swap_chain);
 
-		last_fullscreen_swap_chain->SetFullscreenState(FALSE, NULL);
+		last_fullscreen_swap_chain->SetFullscreenState(FALSE, nullptr);
 		//last_fullscreen_swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
 	}
 
@@ -616,7 +559,7 @@ static LONG WINAPI migoto_exception_filter(_In_ struct _EXCEPTION_POINTERS *Exce
 	// this could fail - if we really want a robust crash handler we could
 	// bring in something like breakpad
 
-	ltime = time(NULL);
+	ltime = time(nullptr);
 	localtime_s(&timestruct, &ltime);
 	wcsftime(path, MAX_PATH, L"3DM-%Y%m%d%H%M%S.dmp", &timestruct);
 
@@ -633,7 +576,7 @@ static LONG WINAPI migoto_exception_filter(_In_ struct _EXCEPTION_POINTERS *Exce
 			{ GetCurrentThreadId(), ExceptionInfo, FALSE };
 
 		if (MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(),
-				fp, MiniDumpWithHandleData, &dump_info, NULL, NULL))
+				fp, MiniDumpWithHandleData, &dump_info, nullptr, nullptr))
 			LogInfo("Succeeded\n");
 		else
 			LogInfo("Failed :(\n");
@@ -695,7 +638,7 @@ static LONG WINAPI migoto_exception_filter(_In_ struct _EXCEPTION_POINTERS *Exce
 
 					if (GetAsyncKeyState('W') < 0) {
 						LogInfo("Attempting to switch to windowed mode...\n"); fflush(LogFile); Beep(1000, 100);
-						CreateThread(NULL, 0, crash_handler_switch_to_window, NULL, 0, NULL);
+						CreateThread(nullptr, 0, crash_handler_switch_to_window, nullptr, 0, nullptr);
 						Sleep(1000);
 					}
 				}
@@ -726,7 +669,7 @@ static DWORD WINAPI exception_keyboard_monitor(_In_ LPVOID lpParameter)
 				// Make sure 3DMigoto's exception handler is
 				// still installed and trigger it:
 				SetUnhandledExceptionFilter(migoto_exception_filter);
-				RaiseException(0x3D819070, 0, 0, NULL);
+				RaiseException(0x3D819070, 0, 0, nullptr);
 			}
 		}
 	}
@@ -758,6 +701,5 @@ void install_crash_handler(int level)
 
 	// Spawn a thread to monitor for a keyboard salute to trigger the
 	// exception handler in the event of a hang/deadlock:
-	CreateThread(NULL, 0, exception_keyboard_monitor, NULL, 0, NULL);
+	CreateThread(nullptr, 0, exception_keyboard_monitor, nullptr, 0, nullptr);
 }
-#endif

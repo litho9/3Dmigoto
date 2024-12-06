@@ -6,12 +6,14 @@
 #include "FrameAnalysis.h"
 #include "Globals.h"
 #include "input.h"
+#include "nvapi.h"
 
 #include <ScreenGrab.h>
 #include <wincodec.h>
 #include <Strsafe.h>
-#include <stdarg.h>
+#include <cstdarg>
 #include <Shlwapi.h>
+#include <stdexcept>
 
 // For windows shortcuts:
 #include <shobjidl.h>
@@ -26,34 +28,35 @@
 static unordered_map<ID3D11CommandList*, FrameAnalysisDeferredBuffersPtr> frame_analysis_deferred_buffer_lists;
 static unordered_map<ID3D11CommandList*, FrameAnalysisDeferredTex2DPtr> frame_analysis_deferred_tex2d_lists;
 
+static void FrameAnalysisLogQuery(ID3D11Query *query) {
+	D3D11_QUERY_DESC desc;
+	query->GetDesc(&desc);
+}
+
 FrameAnalysisContext::FrameAnalysisContext(ID3D11Device1 *pDevice, ID3D11DeviceContext1 *pContext) :
 	HackerContext(pDevice, pContext)
 {
 	analyse_options = FrameAnalysisOptions::INVALID;
 	oneshot_analyse_options = FrameAnalysisOptions::INVALID;
 	oneshot_valid = false;
-	frame_analysis_log = NULL;
+	frame_analysis_log = nullptr;
 	draw_call = 0;
 	non_draw_call_dump_counter = 0;
 }
 
-FrameAnalysisContext::~FrameAnalysisContext()
-{
+FrameAnalysisContext::~FrameAnalysisContext() {
 	if (frame_analysis_log)
 		fclose(frame_analysis_log);
 }
 
-void FrameAnalysisContext::vFrameAnalysisLog(char *fmt, va_list ap)
-{
-	wchar_t filename[MAX_PATH];
-
+void FrameAnalysisContext::vFrameAnalysisLog(const char *fmt, const va_list ap) {
 	LogDebugNoNL("FrameAnalysisContext(%s@%p)::", type_name(this), this);
 	vLogDebug(fmt, ap);
 
 	if (!G->analyse_frame) {
 		if (frame_analysis_log)
 			fclose(frame_analysis_log);
-		frame_analysis_log = NULL;
+		frame_analysis_log = nullptr;
 		return;
 	}
 
@@ -62,7 +65,7 @@ void FrameAnalysisContext::vFrameAnalysisLog(char *fmt, va_list ap)
 	// have here, but even though we removed that test this is still a good
 	// reminder for other settings as well.
 	//
-	// Using the global analyse options here as the local copy in the
+	// Using the global analise options here as the local copy in the
 	// context is only updated after draw calls. We could potentially
 	// process the triggers here, but this function is intended to log
 	// other calls as well where that wouldn't make sense. We could change
@@ -70,6 +73,7 @@ void FrameAnalysisContext::vFrameAnalysisLog(char *fmt, va_list ap)
 	// to log calls for deferred contexts here as well.
 
 	if (!frame_analysis_log) {
+		wchar_t filename[MAX_PATH];
 		// Use the original context to check the type, otherwise we
 		// will recursively call ourselves:
 		if (GetPassThroughOrigContext1()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
@@ -96,10 +100,8 @@ void FrameAnalysisContext::vFrameAnalysisLog(char *fmt, va_list ap)
 	vfprintf(frame_analysis_log, fmt, ap);
 }
 
-void FrameAnalysisContext::FrameAnalysisLog(char *fmt, ...)
-{
+void FrameAnalysisContext::FrameAnalysisLog(const char *fmt, ...) {
 	va_list ap;
-
 	va_start(ap, fmt);
 	vFrameAnalysisLog(fmt, ap);
 	va_end(ap);
@@ -114,9 +116,7 @@ void FrameAnalysisContext::FrameAnalysisLog(char *fmt, ...)
 	FrameAnalysisLog("3DMigoto " fmt, __VA_ARGS__); \
 } while (0)
 
-
-static void FrameAnalysisLogSlot(FILE *frame_analysis_log, int slot, char *slot_name)
-{
+static void FrameAnalysisLogSlot(FILE *frame_analysis_log, const int slot, char *slot_name) {
 	if (slot_name)
 		fprintf(frame_analysis_log, "       %s:", slot_name);
 	else if (slot != -1)
@@ -124,70 +124,43 @@ static void FrameAnalysisLogSlot(FILE *frame_analysis_log, int slot, char *slot_
 }
 
 template <class ID3D11Shader>
-void FrameAnalysisContext::FrameAnalysisLogShaderHash(ID3D11Shader *shader)
-{
-	ShaderMap::iterator hash;
-
-	// Always complete the line in the debug log:
-	LogDebug("\n");
-
-	if (!G->analyse_frame || !frame_analysis_log)
-		return;
-
+void FrameAnalysisContext::FrameAnalysisLogShaderHash(ID3D11Shader *shader) {
+	LogDebug("\n"); // Always complete the line in the debug log:
+	if (!G->analyse_frame || !frame_analysis_log) return;
 	if (!shader) {
 		fprintf(frame_analysis_log, "\n");
 		return;
 	}
-
 	EnterCriticalSectionPretty(&G->mCriticalSection);
-
-	hash = lookup_shader_hash(shader);
+	auto hash = lookup_shader_hash(shader);
 	if (hash != end(G->mShaders))
 		fprintf(frame_analysis_log, " hash=%016llx", hash->second);
-
 	LeaveCriticalSection(&G->mCriticalSection);
-
 	fprintf(frame_analysis_log, "\n");
 }
 
-void FrameAnalysisContext::FrameAnalysisLogResourceHash(ID3D11Resource *resource)
-{
-	uint32_t hash, orig_hash;
-	struct ResourceHashInfo *info;
-
-	// Always complete the line in the debug log:
-	LogDebug("\n");
-
-	if (!G->analyse_frame || !frame_analysis_log)
-		return;
-
+void FrameAnalysisContext::FrameAnalysisLogResourceHash(const ID3D11Resource *resource) {
+	LogDebug("\n"); // Always complete the line in the debug log:
+	if (!G->analyse_frame || !frame_analysis_log) return;
 	if (!resource) {
 		fprintf(frame_analysis_log, "\n");
 		return;
 	}
-
 	EnterCriticalSectionPretty(&G->mCriticalSection);
 	EnterCriticalSectionPretty(&G->mResourcesLock);
-
 	try {
-		hash = G->mResources.at(resource).hash;
-		orig_hash = G->mResources.at(resource).orig_hash;
-		if (hash)
-			fprintf(frame_analysis_log, " hash=%08x", hash);
-		if (orig_hash != hash)
-			fprintf(frame_analysis_log, " orig_hash=%08x", orig_hash);
+		const uint32_t hash = G->mResources.at(resource).hash;
+		const uint32_t orig_hash = G->mResources.at(resource).orig_hash;
+		if (hash) fprintf(frame_analysis_log, " hash=%08x", hash);
+		if (orig_hash != hash) fprintf(frame_analysis_log, " orig_hash=%08x", orig_hash);
 
-		info = &G->mResourceInfo.at(orig_hash);
+		const ResourceHashInfo *info = &G->mResourceInfo.at(orig_hash);
 		if (info->hash_contaminated) {
 			fprintf(frame_analysis_log, " hash_contamination=");
-			if (!info->map_contamination.empty())
-				fprintf(frame_analysis_log, "Map,");
-			if (!info->update_contamination.empty())
-				fprintf(frame_analysis_log, "UpdateSubresource,");
-			if (!info->copy_contamination.empty())
-				fprintf(frame_analysis_log, "CopyResource,");
-			if (!info->region_contamination.empty())
-				fprintf(frame_analysis_log, "UpdateSubresourceRegion,");
+			if (!info->map_contamination.empty()) fprintf(frame_analysis_log, "Map,");
+			if (!info->update_contamination.empty()) fprintf(frame_analysis_log, "UpdateSubresource,");
+			if (!info->copy_contamination.empty()) fprintf(frame_analysis_log, "CopyResource,");
+			if (!info->region_contamination.empty()) fprintf(frame_analysis_log, "UpdateSubresourceRegion,");
 		}
 	} catch (std::out_of_range) {
 	}
@@ -198,80 +171,45 @@ void FrameAnalysisContext::FrameAnalysisLogResourceHash(ID3D11Resource *resource
 	fprintf(frame_analysis_log, "\n");
 }
 
-void FrameAnalysisContext::FrameAnalysisLogResource(int slot, char *slot_name, ID3D11Resource *resource)
-{
-	if (!resource || !G->analyse_frame || !frame_analysis_log)
-		return;
-
+void FrameAnalysisContext::FrameAnalysisLogResource(const int slot, char *slot_name, ID3D11Resource *resource) {
+	if (!resource || !G->analyse_frame || !frame_analysis_log) return;
 	FrameAnalysisLogSlot(frame_analysis_log, slot, slot_name);
 	fprintf(frame_analysis_log, " resource=0x%p", resource);
-
 	FrameAnalysisLogResourceHash(resource);
 }
 
-void FrameAnalysisContext::FrameAnalysisLogView(int slot, char *slot_name, ID3D11View *view)
-{
-	ID3D11Resource *resource;
-
-	if (!view || !G->analyse_frame || !frame_analysis_log)
-		return;
-
+void FrameAnalysisContext::FrameAnalysisLogView(const int slot, char *slot_name, ID3D11View *view) {
+	if (!view || !G->analyse_frame || !frame_analysis_log) return;
 	FrameAnalysisLogSlot(frame_analysis_log, slot, slot_name);
 	fprintf(frame_analysis_log, " view=0x%p", view);
-
+	ID3D11Resource *resource;
 	view->GetResource(&resource);
-	if (!resource)
-		return;
-
-	FrameAnalysisLogResource(-1, NULL, resource);
-
+	if (!resource) return;
+	FrameAnalysisLogResource(-1, nullptr, resource);
 	resource->Release();
 }
 
-void FrameAnalysisContext::FrameAnalysisLogResourceArray(UINT start, UINT len, ID3D11Resource *const *ppResources)
-{
-	UINT i;
-
-	if (!ppResources || !G->analyse_frame || !frame_analysis_log)
-		return;
-
-	for (i = 0; i < len; i++)
-		FrameAnalysisLogResource(start + i, NULL, ppResources[i]);
+void FrameAnalysisContext::FrameAnalysisLogResourceArray(const UINT start, const UINT len, ID3D11Resource *const *ppResources) {
+	if (!ppResources || !G->analyse_frame || !frame_analysis_log) return;
+	for (UINT i = 0; i < len; i++)
+		FrameAnalysisLogResource(i + start, nullptr, ppResources[i]);
 }
 
-void FrameAnalysisContext::FrameAnalysisLogViewArray(UINT start, UINT len, ID3D11View *const *ppViews)
-{
-	UINT i;
-
-	if (!ppViews || !G->analyse_frame || !frame_analysis_log)
-		return;
-
-	for (i = 0; i < len; i++)
-		FrameAnalysisLogView(start + i, NULL, ppViews[i]);
+auto FrameAnalysisContext::FrameAnalysisLogViewArray(const UINT start, const UINT len, ID3D11View *const *ppViews) -> void {
+	if (!ppViews || !G->analyse_frame || !frame_analysis_log) return;
+	for (UINT i = 0; i < len; i++)
+		FrameAnalysisLogView(start + i, nullptr, ppViews[i]);
 }
 
-void FrameAnalysisContext::FrameAnalysisLogMiscArray(UINT start, UINT len, void *const *array)
-{
-	UINT i;
-	void *item;
-
-	if (!array || !G->analyse_frame || !frame_analysis_log)
-		return;
-
-	for (i = 0; i < len; i++) {
-		item = array[i];
+void FrameAnalysisContext::FrameAnalysisLogMiscArray(const UINT start, const UINT len, void *const *array) const {
+	if (!array || !G->analyse_frame || !frame_analysis_log) return;
+	for (UINT i = 0; i < len; i++) {
+		void *item = array[i];
 		if (item) {
-			FrameAnalysisLogSlot(frame_analysis_log, start + i, NULL);
+			FrameAnalysisLogSlot(frame_analysis_log, i + start, nullptr);
 			fprintf(frame_analysis_log, " handle=0x%p\n", item);
 		}
 	}
-}
-
-static void FrameAnalysisLogQuery(ID3D11Query *query)
-{
-	D3D11_QUERY_DESC desc;
-
-	query->GetDesc(&desc);
 }
 
 void FrameAnalysisContext::FrameAnalysisLogAsyncQuery(ID3D11Asynchronous *async)
@@ -489,7 +427,7 @@ void FrameAnalysisContext::Dump2DResource(ID3D11Texture2D *resource, wchar_t
 	// reverse stereo blit). DirectXTK will notice this has been done and
 	// skip doing it again.
 	resource->GetDesc(&staging_desc);
-	if ((staging_desc.Usage != D3D11_USAGE_STAGING) || !(staging_desc.CPUAccessFlags & D3D11_CPU_ACCESS_READ) || (staging_desc.Format != format)) {
+	if (staging_desc.Usage != D3D11_USAGE_STAGING || !(staging_desc.CPUAccessFlags & D3D11_CPU_ACCESS_READ) || staging_desc.Format != format) {
 		hr = StageResource(resource, &staging_desc, &staging, format);
 		if (FAILED(hr))
 			return;
@@ -1550,23 +1488,16 @@ bool FrameAnalysisContext::DeferDumpBuffer(ID3D11Buffer *staging,
 		FrameAnalysisOptions buf_type_mask, int idx, DXGI_FORMAT ib_fmt,
 		UINT stride, UINT offset, UINT first, UINT count, ID3DBlob *layout,
 		D3D11_PRIMITIVE_TOPOLOGY topology, DrawCallInfo *call_info,
-		ID3D11Buffer *staged_ib_for_vb, UINT ib_off_for_vb)
-{
-	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_DELAY))
-		return false;
-
-	if (GetPassThroughOrigContext1()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
+		ID3D11Buffer *staged_ib_for_vb, UINT ib_off_for_vb) {
+	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_DELAY) || GetPassThroughOrigContext1()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
 		return false;
 
 	if (!deferred_buffers) {
 		deferred_buffers = make_unique<FrameAnalysisDeferredBuffers>();
 		FALogInfo("Creating deferred staging Buffer list %p on context %p\n", deferred_buffers.get(), this);
 	}
-
 	FALogInfo("Deferring Buffer dump: %S\n", filename);
-	deferred_buffers->emplace_back(analyse_options, staging, orig_desc, filename,
-			buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout,
-			topology, call_info, staged_ib_for_vb, ib_off_for_vb);
+	deferred_buffers->emplace_back(analyse_options, staging, orig_desc, filename, buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout, topology, call_info, staged_ib_for_vb, ib_off_for_vb);
 	return true;
 }
 
@@ -1705,43 +1636,41 @@ void FrameAnalysisContext::determine_vb_count(UINT *count, ID3D11Buffer *staged_
 }
 
 void FrameAnalysisContext::DumpBufferImmediateCtx(ID3D11Buffer *staging, D3D11_BUFFER_DESC *orig_desc,
-		wstring filename, FrameAnalysisOptions buf_type_mask, int idx,
-		DXGI_FORMAT ib_fmt, UINT stride, UINT offset, UINT first, UINT count, ID3DBlob *layout,
-		D3D11_PRIMITIVE_TOPOLOGY topology, DrawCallInfo *call_info,
-		ID3D11Buffer *staged_ib_for_vb, UINT ib_off_for_vb)
-{
-	wchar_t bin_filename[MAX_PATH], txt_filename[MAX_PATH];
+		wstring filename, const FrameAnalysisOptions buf_type_mask, const int idx,
+		const DXGI_FORMAT ib_fmt, const UINT stride, const UINT offset, const UINT first, UINT count, ID3DBlob *layout,
+		const D3D11_PRIMITIVE_TOPOLOGY topology, DrawCallInfo *call_info,
+		ID3D11Buffer *staged_ib_for_vb, const UINT ib_off_for_vb) {
 	D3D11_MAPPED_SUBRESOURCE map;
-	HRESULT hr;
-	FILE *fd = NULL;
-	wchar_t *bin_ext;
-	size_t ext;
-	errno_t err;
-
-	hr = GetDumpingContext()->Map(staging, 0, D3D11_MAP_READ, 0, &map);
+	const HRESULT hr = GetDumpingContext()->Map(staging, 0, D3D11_MAP_READ, 0, &map);
 	if (FAILED(hr)) {
-		FALogErr("DumpBuffer failed to map staging resource: 0x%x\n", hr);
+		FALogErr("DumpBuffer failed to map staging resource: 0x%x\n", hr)
 		return;
 	}
 
-	dedupe_buf_filename(staging, orig_desc, &map, bin_filename, MAX_PATH);
+	wchar_t bin_filename[MAX_PATH];
+	wchar_t dedupe_dir[MAX_PATH];
+	uint32_t hash = crc32c_hw(0, map.pData, orig_desc->ByteWidth);
+	hash = crc32c_hw(hash, orig_desc, sizeof(D3D11_BUFFER_DESC));
+	get_deduped_dir(dedupe_dir, MAX_PATH);
+	_snwprintf_s(bin_filename, MAX_PATH, MAX_PATH, L"%ls\\%08x.XXX", dedupe_dir, hash);
 
-	ext = filename.find_last_of(L'.');
-	bin_ext = wcsrchr(bin_filename, L'.');
+	const size_t ext = filename.find_last_of(L'.');
+	wchar_t *bin_ext = wcsrchr(bin_filename, L'.');
 	if (ext == wstring::npos || !bin_ext) {
-		FALogErr("DumpBuffer: Filename missing extension\n");
+		FALogErr("DumpBuffer: Filename missing extension\n")
 		goto out_unmap;
 	}
 
 	if (analyse_options & FrameAnalysisOptions::FMT_BUF_BIN) {
 		filename.replace(ext, wstring::npos, L".buf");
 		wcscpy_s(bin_ext, MAX_PATH + bin_filename - bin_ext, L".buf");
-		FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), bin_filename);
+		FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), bin_filename)
 
 		if (GetFileAttributes(bin_filename) == INVALID_FILE_ATTRIBUTES) {
-			err = wfopen_ensuring_access(&fd, bin_filename, L"wb");
+			FILE *fd = nullptr;
+			const errno_t err = wfopen_ensuring_access(&fd, bin_filename, L"wb");
 			if (!fd) {
-				FALogErr("Unable to create %S: %u\n", bin_filename, err);
+				FALogErr("Unable to create %S: %u\n", bin_filename, err)
 				goto out_unmap;
 			}
 			fwrite(map.pData, 1, orig_desc->ByteWidth, fd);
@@ -1751,33 +1680,32 @@ void FrameAnalysisContext::DumpBufferImmediateCtx(ID3D11Buffer *staging, D3D11_B
 	}
 
 	if (analyse_options & FrameAnalysisOptions::FMT_BUF_TXT) {
+		wchar_t txt_filename[MAX_PATH];
 		filename.replace(ext, wstring::npos, L".txt");
 
 		if (buf_type_mask & FrameAnalysisOptions::DUMP_CB) {
 			dedupe_buf_filename_txt(bin_filename, txt_filename, MAX_PATH, 'c', idx, stride, offset);
-			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename);
+			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename)
 			if (GetFileAttributes(txt_filename) == INVALID_FILE_ATTRIBUTES) {
 				DumpBufferTxt(txt_filename, &map, orig_desc->ByteWidth, 'c', idx, stride, offset);
 			}
 		} else if (buf_type_mask & FrameAnalysisOptions::DUMP_VB) {
 			determine_vb_count(&count, staged_ib_for_vb, call_info, ib_off_for_vb, ib_fmt);
 			dedupe_buf_filename_vb_txt(bin_filename, txt_filename, MAX_PATH, idx, stride, offset, first, count, layout, topology, call_info);
-			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename);
+			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename)
 			if (GetFileAttributes(txt_filename) == INVALID_FILE_ATTRIBUTES) {
 				DumpVBTxt(txt_filename, &map, orig_desc->ByteWidth, idx, stride, offset, first, count, layout, topology, call_info);
 			}
 		} else if (buf_type_mask & FrameAnalysisOptions::DUMP_IB) {
 			dedupe_buf_filename_ib_txt(bin_filename, txt_filename, MAX_PATH, ib_fmt, offset, first, count, topology);
-			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename);
+			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename)
 			if (GetFileAttributes(txt_filename) == INVALID_FILE_ATTRIBUTES) {
 				DumpIBTxt(txt_filename, &map, orig_desc->ByteWidth, ib_fmt, offset, first, count, topology);
 			}
 		} else {
-			// We don't know what kind of buffer this is, so just
-			// use the generic dump routine:
-
+			// We don't know what kind of buffer this is, so just use the generic dump routine:
 			dedupe_buf_filename_txt(bin_filename, txt_filename, MAX_PATH, '?', idx, stride, offset);
-			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename);
+			FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), txt_filename)
 			if (GetFileAttributes(txt_filename) == INVALID_FILE_ATTRIBUTES) {
 				DumpBufferTxt(txt_filename, &map, orig_desc->ByteWidth, '?', idx, stride, offset);
 			}
@@ -1791,7 +1719,6 @@ void FrameAnalysisContext::DumpBufferImmediateCtx(ID3D11Buffer *staging, D3D11_B
 		filename.replace(ext, wstring::npos, L".dsc");
 		wcscpy_s(bin_ext, MAX_PATH + bin_filename - bin_ext, L".dsc");
 		FALogInfo("Dumping Buffer %S -> %S\n", filename.c_str(), bin_filename);
-
 		if (GetFileAttributes(bin_filename) == INVALID_FILE_ATTRIBUTES)
 			DumpDesc(orig_desc, bin_filename);
 		link_deduplicated_files(filename.c_str(), bin_filename);
@@ -1802,50 +1729,52 @@ out_unmap:
 }
 
 void FrameAnalysisContext::DumpBuffer(ID3D11Buffer *buffer, wchar_t *filename,
-		FrameAnalysisOptions buf_type_mask, int idx, DXGI_FORMAT ib_fmt,
-		UINT stride, UINT offset, UINT first, UINT count, ID3DBlob *layout,
-		D3D11_PRIMITIVE_TOPOLOGY topology, DrawCallInfo *call_info,
-		ID3D11Buffer **staged_ib_ret, ID3D11Buffer *staged_ib_for_vb, UINT ib_off_for_vb)
-{
+		const FrameAnalysisOptions buf_type_mask, const int idx, const DXGI_FORMAT ib_fmt,
+		const UINT stride, const UINT offset, const UINT first, const UINT count, ID3DBlob *layout,
+		const D3D11_PRIMITIVE_TOPOLOGY topology, DrawCallInfo *call_info,
+		ID3D11Buffer **staged_ib_ret, ID3D11Buffer *staged_ib_for_vb, const UINT ib_off_for_vb) {
 	D3D11_BUFFER_DESC desc, orig_desc;
-	ID3D11Buffer *staging = NULL;
-	HRESULT hr;
 
-	// Process key inputs to allow user to abort long running frame
-	// analysis sessions (this case is specifically for dump_vb and dump_ib
-	// which bypasses DumpResource()):
+	// Process key inputs to allow user to abort long-running frame analysis sessions (this case is specifically for dump_vb and dump_ib which bypasses DumpResource()):
 	DispatchInputEvents(GetHackerDevice());
 	if (!G->analyse_frame)
 		return;
 
 	buffer->GetDesc(&desc);
 	memcpy(&orig_desc, &desc, sizeof(D3D11_BUFFER_DESC));
-
 	desc.Usage = D3D11_USAGE_STAGING;
 	desc.BindFlags = 0;
 	desc.MiscFlags = 0;
 	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 
+	ID3D11Buffer *staging = nullptr;
 	LockResourceCreationMode();
-	hr = GetHackerDevice()->GetPassThroughOrigDevice1()->CreateBuffer(&desc, NULL, &staging);
+	const HRESULT hr = GetHackerDevice()->GetPassThroughOrigDevice1()->CreateBuffer(&desc, nullptr, &staging);
 	UnlockResourceCreationMode();
 	if (FAILED(hr)) {
-		FALogErr("DumpBuffer failed to create staging buffer: 0x%x\n", hr);
+		FALogErr("DumpBuffer failed to create staging buffer: 0x%x\n", hr)
 		return;
 	}
 
 	GetDumpingContext()->CopyResource(staging, buffer);
 
-	if (!DeferDumpBuffer(staging, &orig_desc, filename, buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout, topology, call_info, staged_ib_for_vb, ib_off_for_vb))
-		DumpBufferImmediateCtx(staging, &orig_desc, filename, buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout, topology, call_info, staged_ib_for_vb, ib_off_for_vb);
+	if (analyse_options & FrameAnalysisOptions::DEFRD_CTX_DELAY &&
+		GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE) {
+		if (!deferred_buffers) {
+			deferred_buffers = make_unique<FrameAnalysisDeferredBuffers>();
+			FALogInfo("Creating deferred staging Buffer list %p on context %p\n", deferred_buffers.get(), this);
+		}
+		FALogInfo("Deferring Buffer dump: %S\n", filename)
+		deferred_buffers->emplace_back(analyse_options, staging, &orig_desc, filename, buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout, topology, call_info, staged_ib_for_vb, ib_off_for_vb);
 
-	// We can return the staged index buffer for later use when dumping the
-	// vertex buffers as text, to determine the maximum vertex count:
+		DumpBufferImmediateCtx(staging, &orig_desc, filename, buf_type_mask, idx, ib_fmt, stride, offset, first, count, layout, topology, call_info, staged_ib_for_vb, ib_off_for_vb);
+	}
+
+	// We can return the staged index buffer for later use when dumping the vertex buffers as text, to determine the maximum vertex count:
 	if (staged_ib_ret) {
 		*staged_ib_ret = staging;
 		staging->AddRef();
 	}
-
 	staging->Release();
 }
 
@@ -1891,26 +1820,19 @@ void FrameAnalysisContext::DumpResource(ID3D11Resource *resource, wchar_t *filen
 	}
 }
 
-static BOOL CreateDeferredFADirectory(LPCWSTR path)
-{
-	DWORD err;
-
-	// Deferred contexts don't have an opportunity to create their
-	// dumps directory earlier, so do so now:
-
+static BOOL CreateDeferredFADirectory(LPCWSTR path) {
+	// Deferred contexts don't have an opportunity to create their dumps directory earlier, so do so now:
 	if (!CreateDirectoryEnsuringAccess(path)) {
-		err = GetLastError();
+		const DWORD err = GetLastError();
 		if (err != ERROR_ALREADY_EXISTS) {
 			LogInfoW(L"Error creating deferred frame analysis directory: %i\n", err);
 			return FALSE;
 		}
 	}
-
 	return TRUE;
 }
 
-void FrameAnalysisContext::get_deduped_dir(wchar_t *path, size_t size)
-{
+void FrameAnalysisContext::get_deduped_dir(wchar_t *path, const size_t size) {
 	if (analyse_options & FrameAnalysisOptions::SHARE_DEDUPED) {
 		if (!GetModuleFileName(migoto_handle, path, (DWORD)size))
 			return;
@@ -1919,18 +1841,13 @@ void FrameAnalysisContext::get_deduped_dir(wchar_t *path, size_t size)
 	} else {
 		_snwprintf_s(path, size, size, L"%ls\\deduped", G->ANALYSIS_PATH);
 	}
-
 	CreateDirectoryEnsuringAccess(path);
 }
 
-HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, size_t size, bool compute,
-		wchar_t *reg, char shader_type, int idx, ID3D11Resource *handle)
-{
-	struct ResourceHashInfo *info;
-	uint32_t hash, orig_hash;
+HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, const size_t size, const bool compute,
+		wchar_t *reg, const char shader_type, const int idx, ID3D11Resource *handle) {
 	wchar_t *pos;
 	size_t rem;
-	HRESULT hr;
 
 	StringCchPrintfExW(filename, size, &pos, &rem, NULL, L"%ls\\", G->ANALYSIS_PATH);
 	if (GetPassThroughOrigContext1()->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED) {
@@ -1940,8 +1857,7 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, size_t si
 	}
 
 	if (!(analyse_options & FrameAnalysisOptions::FILENAME_REG)) {
-		// We don't allow hold to be changed mid-frame due to potential
-		// for filename conflicts, so use def_analyse_options:
+		// We don't allow hold to be changed mid-frame due to potential for filename conflicts, so use def_analyse_options:
 		if (G->def_analyse_options & FrameAnalysisOptions::HOLD)
 			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%i.", G->analyse_frame_no);
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%06i-", draw_call);
@@ -1963,6 +1879,7 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, size_t si
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%06i", draw_call);
 	}
 
+	uint32_t hash, orig_hash;
 	EnterCriticalSectionPretty(&G->mResourcesLock);
 	try {
 		hash = G->mResources.at(handle).hash;
@@ -1974,7 +1891,7 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, size_t si
 
 	if (hash) {
 		try {
-			info = &G->mResourceInfo.at(orig_hash);
+			ResourceHashInfo *info = &G->mResourceInfo.at(orig_hash);
 			if (info->hash_contaminated) {
 				StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"=!");
 				if (!info->map_contamination.empty())
@@ -2000,35 +1917,22 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilename(wchar_t *filename, size_t si
 	if (compute) {
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-cs=%016I64x", mCurrentComputeShader);
 	} else {
-		if (mCurrentVertexShader)
-			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-vs=%016I64x", mCurrentVertexShader);
-		if (mCurrentHullShader)
-			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-hs=%016I64x", mCurrentHullShader);
-		if (mCurrentDomainShader)
-			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-ds=%016I64x", mCurrentDomainShader);
-		if (mCurrentGeometryShader)
-			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-gs=%016I64x", mCurrentGeometryShader);
-		if (mCurrentPixelShader)
-			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-ps=%016I64x", mCurrentPixelShader);
+		vector<UINT64> agh = {mCurrentVertexShader, mCurrentHullShader, mCurrentDomainShader, mCurrentGeometryShader, mCurrentPixelShader};
+		for (auto it = agh.begin(); it != agh.end(); ++it)
+			if (*it)
+				StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"-vs=%016I64x", it);
 	}
 
-	hr = StringCchPrintfW(pos, rem, L".XXX");
-	if (FAILED(hr)) {
-		FALogErr("Failed to create filename: 0x%x\n", hr);
-		// Could create a shorter filename without hashes if this
-		// becomes a problem in practice
-	}
-
+	const HRESULT hr = StringCchPrintfW(pos, rem, L".XXX");
+	if (FAILED(hr))
+		FALogErr("Failed to create filename: 0x%x\n", hr) // Could create a shorter filename without hashes if this becomes a problem in practice
 	return hr;
 }
 
-HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, size_t size, const wchar_t *type, ID3D11Resource *handle, bool force_filename_handle)
-{
-	struct ResourceHashInfo *info;
+HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, size_t size, const wchar_t *type, ID3D11Resource *handle, bool force_filename_handle) {
 	uint32_t hash, orig_hash;
 	wchar_t *pos;
 	size_t rem;
-	HRESULT hr;
 
 	StringCchPrintfExW(filename, size, &pos, &rem, NULL, L"%ls\\", G->ANALYSIS_PATH);
 	if (GetPassThroughOrigContext1()->GetType() == D3D11_DEVICE_CONTEXT_DEFERRED) {
@@ -2042,7 +1946,6 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, s
 	if (G->def_analyse_options & FrameAnalysisOptions::HOLD)
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%i.", G->analyse_frame_no);
 	StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%06i.%i-", draw_call, non_draw_call_dump_counter);
-
 	StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"%s", type);
 
 	EnterCriticalSectionPretty(&G->mResourcesLock);
@@ -2056,7 +1959,7 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, s
 
 	if (hash) {
 		try {
-			info = &G->mResourceInfo.at(orig_hash);
+			const ResourceHashInfo *info = &G->mResourceInfo.at(orig_hash);
 			if (info->hash_contaminated) {
 				StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"=!");
 				if (!info->map_contamination.empty())
@@ -2072,7 +1975,6 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, s
 		} catch (std::out_of_range) {}
 
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"=%08x", hash);
-
 		if (hash != orig_hash)
 			StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"(%08x)", orig_hash);
 	}
@@ -2081,7 +1983,7 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, s
 	if (force_filename_handle || (analyse_options & FrameAnalysisOptions::FILENAME_HANDLE))
 		StringCchPrintfExW(pos, rem, &pos, &rem, NULL, L"@%p", handle);
 
-	hr = StringCchPrintfW(pos, rem, L".XXX");
+	HRESULT hr = StringCchPrintfW(pos, rem, L".XXX");
 	if (FAILED(hr))
 		FALogErr("Failed to create filename: 0x%x\n", hr);
 
@@ -2089,107 +1991,32 @@ HRESULT FrameAnalysisContext::FrameAnalysisFilenameResource(wchar_t *filename, s
 }
 
 const wchar_t* FrameAnalysisContext::dedupe_tex2d_filename(ID3D11Texture2D *resource,
-		D3D11_TEXTURE2D_DESC *orig_desc, wchar_t *dedupe_filename,
-		size_t size, const wchar_t *traditional_filename, DXGI_FORMAT format)
-{
+		const D3D11_TEXTURE2D_DESC *orig_desc, wchar_t *dedupe_filename,
+		const size_t size, const wchar_t *traditional_filename, DXGI_FORMAT format) {
 	D3D11_MAPPED_SUBRESOURCE map;
-	HRESULT hr;
-	uint32_t hash;
 	wchar_t dedupe_dir[MAX_PATH];
 
-	// Many of the files dumped with frame analysis are identical, and this
-	// can take a very long time and waste a lot of disk space to dump them
-	// all. We employ a new strategy to minimise this by saving only unique
-	// files and hardlinking them into their traditional FA location.
-	//
-	// This function is responsible for finding a filename that will be
-	// unique for the given resource, with its current contents (not the
-	// contents it was created with). To do this, we will re-hash the
-	// resource now. If there happen to be any hash collisions in a frame
-	// analysis dump it will become misleading, as the later resource will
-	// point to the earlier resource with the same hash, but I'm not
-	// expecting this to be a major problem in practice.
-	//
-	// We use the original description from the resource prior to being
-	// staged to try to get the best chance of matching the 3DMigoto hash
-	// for textures that have not been changed on the GPU. There may still
-	// be reasons it won't if the description retrieved from DirectX
-	// doesn't match the description used to create it (e.g. mip-maps being
-	// generated after creation I guess).
-
-	hr = GetDumpingContext()->Map(resource, 0, D3D11_MAP_READ, 0, &map);
+	const HRESULT hr = GetDumpingContext()->Map(resource, 0, D3D11_MAP_READ, 0, &map);
 	if (FAILED(hr)) {
 		FALogErr("Frame Analysis filename deduplication failed to map resource: 0x%x\n", hr);
-		goto err;
+		return traditional_filename;
 	};
 
-	// CalcTexture2DDataHash takes a D3D11_SUBRESOURCE_DATA*, which happens
-	// to be binary identical to a D3D11_MAPPED_SUBRESOURCE (though it is
-	// not an array), so we can safely cast it.
-	//
-	// Now using CalcTexture2DDataHashAccurate to take the full texture
-	// into consideration when generating the hash - necessary as our
-	// legacy texture hash is very broken (passable for texture filtering,
-	// but not for this) and doesn't hash anywhere near the full image, so
-	// changes in the mid to lower half of the image won't affect the hash.
-	hash = CalcTexture2DDataHashAccurate(orig_desc, (D3D11_SUBRESOURCE_DATA*)&map);
+	uint32_t hash = CalcTexture2DDataHashAccurate(orig_desc, reinterpret_cast<D3D11_SUBRESOURCE_DATA *>(&map));
 	hash = CalcTexture2DDescHash(hash, orig_desc);
 
 	GetDumpingContext()->Unmap(resource, 0);
-
 	if (format == DXGI_FORMAT_UNKNOWN)
 		format = orig_desc->Format;
-
 	get_deduped_dir(dedupe_dir, MAX_PATH);
 	_snwprintf_s(dedupe_filename, size, size, L"%ls\\%08x-%S.XXX", dedupe_dir, hash, TexFormatStr(format));
-
 	return dedupe_filename;
-err:
-	return traditional_filename;
 }
 
-void FrameAnalysisContext::dedupe_buf_filename(ID3D11Buffer *resource,
-		D3D11_BUFFER_DESC *orig_desc, D3D11_MAPPED_SUBRESOURCE *map,
-		wchar_t *dedupe_filename, size_t size)
-{
-	wchar_t dedupe_dir[MAX_PATH];
-	uint32_t hash;
-
-	// Many of the files dumped with frame analysis are identical, and this
-	// can take a very long time and waste a lot of disk space to dump them
-	// all. We employ a new strategy to minimise this by saving only unique
-	// files and hardlinking them into their traditional FA location.
-	//
-	// This function is responsible for finding a filename that will be
-	// unique for the given resource, with its current contents (not the
-	// contents it was created with). To do this, we will re-hash the
-	// resource now. If there happen to be any hash collisions in a frame
-	// analysis dump it will become misleading, as the later resource will
-	// point to the earlier resource with the same hash, but I'm not
-	// expecting this to be a major problem in practice.
-	//
-	// We use the original description from the resource prior to being
-	// staged to try to get the best chance of matching the 3DMigoto hash
-	// for textures that have not been changed on the GPU. There may still
-	// be reasons it won't if the description retrieved from DirectX
-	// doesn't match the description used to create it (e.g. unused fields
-	// for a given buffer type being zeroed out).
-
-	hash = crc32c_hw(0, map->pData, orig_desc->ByteWidth);
-	hash = crc32c_hw(hash, orig_desc, sizeof(D3D11_BUFFER_DESC));
-
-	get_deduped_dir(dedupe_dir, MAX_PATH);
-	_snwprintf_s(dedupe_filename, size, size, L"%ls\\%08x.XXX", dedupe_dir, hash);
-}
-
-void FrameAnalysisContext::rotate_deduped_file(const wchar_t *dedupe_filename)
-{
-	wchar_t rotated_filename[MAX_PATH];
-	unsigned rotate;
+void FrameAnalysisContext::rotate_deduped_file(const wchar_t *dedupe_filename) {
 	size_t ext_pos;
-	const wchar_t *ext;
 
-	ext = wcsrchr(dedupe_filename, L'.');
+	const wchar_t *ext = wcsrchr(dedupe_filename, L'.');
 	if (ext) {
 		ext_pos = ext - dedupe_filename;
 	} else {
@@ -2197,9 +2024,9 @@ void FrameAnalysisContext::rotate_deduped_file(const wchar_t *dedupe_filename)
 		ext = L"";
 	}
 
-	for (rotate = 1; rotate; rotate++) {
-		swprintf_s(rotated_filename, MAX_PATH,
-				L"%.*s.%d%s", (int)ext_pos, dedupe_filename, rotate, ext);
+	for (unsigned rotate = 1; rotate; rotate++) {
+		wchar_t rotated_filename[MAX_PATH];
+		swprintf_s(rotated_filename, MAX_PATH, L"%.*s.%d%s", (int)ext_pos, dedupe_filename, rotate, ext);
 
 		if (GetFileAttributes(rotated_filename) == INVALID_FILE_ATTRIBUTES) {
 			// Move the base file to have the rotated filename,
@@ -2346,45 +2173,26 @@ void FrameAnalysisContext::_DumpCBs(char shader_type, bool compute,
 	}
 }
 
-void FrameAnalysisContext::_DumpTextures(char shader_type, bool compute,
-	ID3D11ShaderResourceView *views[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT])
-{
+void FrameAnalysisContext::_DumpTextures(const char shader_type, const bool compute,
+	ID3D11ShaderResourceView *views[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT]) {
 	ID3D11Resource *resource;
 	D3D11_SHADER_RESOURCE_VIEW_DESC view_desc;
-	wchar_t filename[MAX_PATH];
-	HRESULT hr;
-	UINT i;
 
-	for (i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT && G->analyse_frame; i++) {
-		if (!views[i])
-			continue;
-
+	for (UINT i = 0; i < D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT && G->analyse_frame; i++) {
+		if (!views[i]) continue;
 		if (i == G->StereoParamsReg || i == G->IniParamsReg) {
-			FALogInfo("Skipped 3DMigoto resource in slot %cs-t%i\n", shader_type, i);
+			FALogInfo("Skipped 3DMigoto resource in slot %cs-t%i\n", shader_type, i)
 			continue;
 		}
-
 		views[i]->GetResource(&resource);
-		if (!resource) {
-			views[i]->Release();
-			continue;
+		if (resource) {
+			views[i]->GetDesc(&view_desc);
+			wchar_t filename[MAX_PATH];
+			const HRESULT hr = FrameAnalysisFilename(filename, MAX_PATH, compute, L"t", shader_type, i, resource);
+			if (SUCCEEDED(hr))
+				DumpResource(resource, filename, FrameAnalysisOptions::DUMP_SRV, i, view_desc.Format, 0, 0);
+			resource->Release();
 		}
-
-		views[i]->GetDesc(&view_desc);
-
-		// TODO: process description to get offset, strides & size for
-		// buffer & bufferex type SRVs and pass down to dump routines,
-		// although I have no idea how to determine which of the
-		// entries in the two D3D11_BUFFER_SRV unions will be valid.
-
-		hr = FrameAnalysisFilename(filename, MAX_PATH, compute, L"t", shader_type, i, resource);
-		if (SUCCEEDED(hr)) {
-			DumpResource(resource, filename,
-					FrameAnalysisOptions::DUMP_SRV, i,
-					view_desc.Format, 0, 0);
-		}
-
-		resource->Release();
 		views[i]->Release();
 	}
 }
@@ -2425,33 +2233,19 @@ void FrameAnalysisContext::DumpCBs(bool compute)
 void FrameAnalysisContext::DumpMesh(DrawCallInfo *call_info)
 {
 	bool dump_ibs = !!(analyse_options & FrameAnalysisOptions::DUMP_IB);
-	bool dump_vbs = !!(analyse_options & FrameAnalysisOptions::DUMP_VB);
-	ID3D11Buffer *staged_ib = NULL;
+	const bool dump_vbs = !!(analyse_options & FrameAnalysisOptions::DUMP_VB);
+	ID3D11Buffer *staged_ib = nullptr;
 	DXGI_FORMAT ib_fmt = DXGI_FORMAT_UNKNOWN;
 	UINT ib_off = 0;
 
-	// If we are dumping vertex buffers as text and an indexed draw call
-	// was in use, we also need to dump (or at the very least stage) the
-	// index buffer so that we can determine the maximum vertex count to
-	// dump to keep the text files small. This is not applicable when only
-	// dumping vertex buffers as binary, since we always dump the entire
-	// buffer in that case.
-	if (dump_vbs && (analyse_options & FrameAnalysisOptions::FMT_BUF_TXT) && call_info->IndexCount)
-		dump_ibs = true;
-
-	if (dump_ibs)
-		DumpIB(call_info, &staged_ib, &ib_fmt, &ib_off);
-
-	if (dump_vbs)
-		DumpVBs(call_info, staged_ib, ib_fmt, ib_off);
-
-	if (staged_ib)
-		staged_ib->Release();
+	if (dump_vbs && analyse_options & FrameAnalysisOptions::FMT_BUF_TXT && call_info->IndexCount) dump_ibs = true;
+	if (dump_ibs) DumpIB(call_info, &staged_ib, &ib_fmt, &ib_off);
+	if (dump_vbs) DumpVBs(call_info, staged_ib, ib_fmt, ib_off);
+	if (staged_ib) staged_ib->Release();
 }
 
-static bool vb_slot_in_layout(int slot, ID3DBlob *layout)
-{
-	D3D11_INPUT_ELEMENT_DESC *layout_desc = NULL;
+static bool vb_slot_in_layout(int slot, ID3DBlob *layout) {
+	D3D11_INPUT_ELEMENT_DESC *layout_desc = nullptr;
 	size_t layout_elements;
 	UINT i;
 
@@ -2528,37 +2322,29 @@ continue_release:
 		layout_desc->Release();
 }
 
-void FrameAnalysisContext::DumpIB(DrawCallInfo *call_info, ID3D11Buffer **staged_ib, DXGI_FORMAT *format, UINT *offset)
-{
-	ID3D11Buffer *buffer = NULL;
-	wchar_t filename[MAX_PATH];
-	HRESULT hr;
+void FrameAnalysisContext::DumpIB(DrawCallInfo *call_info, ID3D11Buffer **staged_ib, DXGI_FORMAT *format, UINT *offset) {
+	ID3D11Buffer *buffer = nullptr;
 	UINT first = 0, count = 0;
-	D3D11_PRIMITIVE_TOPOLOGY topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
-
 	if (call_info) {
 		first = call_info->FirstIndex;
 		count = call_info->IndexCount;
 	}
-
 	GetPassThroughOrigContext1()->IAGetIndexBuffer(&buffer, format, offset);
 	if (!buffer)
 		return;
+	auto topology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
 	GetPassThroughOrigContext1()->IAGetPrimitiveTopology(&topology);
 
-	hr = FrameAnalysisFilename(filename, MAX_PATH, false, L"ib", NULL, -1, buffer);
-	if (SUCCEEDED(hr)) {
-		DumpBuffer(buffer, filename,
-				FrameAnalysisOptions::DUMP_IB, -1,
-				*format, 0, *offset, first, count, NULL,
-				topology, call_info, staged_ib, NULL, 0);
+	wchar_t filename[MAX_PATH];
+	if (SUCCEEDED(FrameAnalysisFilename(filename, MAX_PATH, false, L"ib", NULL, -1, buffer))) {
+		DumpBuffer(buffer, filename, FrameAnalysisOptions::DUMP_IB, -1,
+			*format, 0, *offset, first, count, nullptr,
+			topology, call_info, staged_ib, nullptr, 0);
 	}
-
 	buffer->Release();
 }
 
-void FrameAnalysisContext::DumpTextures(bool compute)
-{
+void FrameAnalysisContext::DumpTextures(const bool compute) {
 	ID3D11ShaderResourceView *views[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT];
 
 	if (compute) {
@@ -2660,43 +2446,28 @@ void FrameAnalysisContext::DumpDepthStencilTargets()
 	dsv->Release();
 }
 
-void FrameAnalysisContext::DumpUAVs(bool compute)
-{
-	UINT i;
-	ID3D11UnorderedAccessView *uavs[D3D11_PS_CS_UAV_REGISTER_COUNT];
+void FrameAnalysisContext::DumpUAVs(const bool compute) {
 	ID3D11Resource *resource;
 	D3D11_UNORDERED_ACCESS_VIEW_DESC view_desc;
-	wchar_t filename[MAX_PATH];
-	HRESULT hr;
 
+	ID3D11UnorderedAccessView *uavs[D3D11_PS_CS_UAV_REGISTER_COUNT];
 	if (compute)
 		GetPassThroughOrigContext1()->CSGetUnorderedAccessViews(0, D3D11_PS_CS_UAV_REGISTER_COUNT, uavs);
 	else
-		GetPassThroughOrigContext1()->OMGetRenderTargetsAndUnorderedAccessViews(0, NULL, NULL, 0, D3D11_PS_CS_UAV_REGISTER_COUNT, uavs);
+		GetPassThroughOrigContext1()->OMGetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, D3D11_PS_CS_UAV_REGISTER_COUNT, uavs);
 
-	for (i = 0; i < D3D11_PS_CS_UAV_REGISTER_COUNT && G->analyse_frame; ++i) {
-		if (!uavs[i])
-			continue;
+	for (UINT i = 0; i < D3D11_PS_CS_UAV_REGISTER_COUNT && G->analyse_frame; ++i) {
+		if (!uavs[i]) continue;
 
 		uavs[i]->GetResource(&resource);
-		if (!resource) {
-			uavs[i]->Release();
-			continue;
+		if (resource) {
+			uavs[i]->GetDesc(&view_desc);
+
+			wchar_t filename[MAX_PATH];
+			if (SUCCEEDED(FrameAnalysisFilename(filename, MAX_PATH, compute, L"u", NULL, i, resource)))
+				DumpResource(resource, filename, FrameAnalysisOptions::DUMP_RT, i, view_desc.Format, 0, 0);
+			resource->Release();
 		}
-
-		uavs[i]->GetDesc(&view_desc);
-
-		// TODO: process description to get offset & size for buffer
-		// type UAVs and pass down to dump routines.
-
-		hr = FrameAnalysisFilename(filename, MAX_PATH, compute, L"u", NULL, i, resource);
-		if (SUCCEEDED(hr)) {
-			DumpResource(resource, filename,
-					FrameAnalysisOptions::DUMP_RT, i,
-					view_desc.Format, 0, 0);
-		}
-
-		resource->Release();
 		uavs[i]->Release();
 	}
 }
@@ -2809,57 +2580,28 @@ void FrameAnalysisContext::update_stereo_dumping_mode()
 		analyse_options |= FrameAnalysisOptions::STEREO;
 }
 
-void FrameAnalysisContext::set_default_dump_formats(bool draw)
-{
+void FrameAnalysisContext::set_default_dump_formats(const bool draw) {
 	// Textures: default to .jps when possible, .bin otherwise:
 	if (!(analyse_options & FrameAnalysisOptions::FMT_2D_MASK))
 		analyse_options |= FrameAnalysisOptions::FMT_2D_AUTO;
 
 	if (!(analyse_options & FrameAnalysisOptions::FMT_BUF_MASK)) {
 		if (draw) {
-			// If we are dumping specific buffer binds slots default to
-			// txt, otherwise buffers aren't dumped by default:
+			// If we are dumping specific buffer binds slots default to txt, otherwise buffers aren't dumped by default:
 			if (analyse_options & FrameAnalysisOptions::DUMP_XB_MASK)
 				analyse_options |= FrameAnalysisOptions::FMT_BUF_TXT;
 		} else {
-			// Command list dump, or dump_on_update/unmap - we always want
-			// to dump both textures and buffers. For buffers we default to
-			// both binary and text for now:
+			// Command list dump, or dump_on_update/unmap - we always want to dump both textures and buffers. For buffers, we default to both binary and text for now:
 			analyse_options |= FrameAnalysisOptions::FMT_BUF_TXT;
 			analyse_options |= FrameAnalysisOptions::FMT_BUF_BIN;
 		}
 	}
 }
 
-void FrameAnalysisContext::FrameAnalysisAfterDraw(bool compute, DrawCallInfo *call_info)
-{
-	NvAPI_Status nvret;
-
+void FrameAnalysisContext::FrameAnalysisAfterDraw(const bool compute, DrawCallInfo *call_info) {
 	update_per_draw_analyse_options();
-
-	// Update: We now have an option to allow analysis on deferred
-	// contexts, because it can still be useful to dump some types of
-	// resources in these cases. Render and depth targets will be pretty
-	// useless, and their use in texture slots will be similarly useless,
-	// but textures that come from the CPU, constant buffers, vertex
-	// buffers, etc that aren't changed on the GPU can still be useful.
-	//
-	// Later we might want to think about ways we could analyse render
-	// targets & UAVs in deferred contexts - a simple approach would be to
-	// dump out the back buffer after executing a command list in the
-	// immediate context, however this would only show the combined result
-	// of all the draw calls from the deferred context, and not the results
-	// of the individual draw operations.
-	//
-	// Another more in-depth approach would be to create the stereo
-	// resources now and issue the reverse blits, then dump them all after
-	// executing the command list. Note that the NVAPI call is not
-	// per-context and therefore may have threading issues, and it's not
-	// clear if it would have to be enabled while submitting the copy
-	// commands in the deferred context, or while playing the command queue
-	// in the immediate context, or both.
-	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK) &&
-	   (GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
+	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK)
+			&& GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE) {
 		draw_call++;
 		return;
 	}
@@ -2867,165 +2609,114 @@ void FrameAnalysisContext::FrameAnalysisAfterDraw(bool compute, DrawCallInfo *ca
 	update_stereo_dumping_mode();
 	set_default_dump_formats(true);
 
-	if ((analyse_options & FrameAnalysisOptions::FMT_2D_MASK) &&
-	    (analyse_options & FrameAnalysisOptions::STEREO) &&
-	    (GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
-		// Enable reverse stereo blit for all resources we are about to dump:
-		nvret = Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, true);
-		if (nvret != NVAPI_OK) {
-			FALogErr("DumpStereoResource failed to enable reverse stereo blit\n");
-			// Continue anyway, we should still be able to dump in 2D...
-		}
-	}
+	const bool stereo = analyse_options & FrameAnalysisOptions::FMT_2D_MASK &&
+	            analyse_options & FrameAnalysisOptions::STEREO &&
+	            GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE;
+	// Enable reverse stereo blit for all resources we are about to dump:
+	if (stereo && Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, true) != NVAPI_OK)
+		FALogErr("DumpStereoResource failed to enable reverse stereo blit\n"); // Continue anyway, we should still be able to dump in 2D...
 
-	// Grab the critical section now as we may need it several times during
-	// dumping for mResources
+	// Grab the critical section now as we may need it several times during dumping for mResources
 	EnterCriticalSectionPretty(&G->mCriticalSection);
-
 	if (analyse_options & FrameAnalysisOptions::DUMP_CB)
 		DumpCBs(compute);
-
-	if (!compute)
-		DumpMesh(call_info);
-
+	if (!compute) {
+		const bool dump_vbs = !!(analyse_options & FrameAnalysisOptions::DUMP_VB);
+		ID3D11Buffer *staged_ib = nullptr;
+		DXGI_FORMAT ib_fmt = DXGI_FORMAT_UNKNOWN;
+		UINT ib_off = 0;
+		if (analyse_options & FrameAnalysisOptions::DUMP_IB ||
+			dump_vbs && analyse_options & FrameAnalysisOptions::FMT_BUF_TXT && call_info->IndexCount)
+			DumpIB(call_info, &staged_ib, &ib_fmt, &ib_off);
+		if (dump_vbs)
+			DumpVBs(call_info, staged_ib, ib_fmt, ib_off);
+		if (staged_ib)
+			staged_ib->Release();
+	}
 	if (analyse_options & FrameAnalysisOptions::DUMP_SRV)
 		DumpTextures(compute);
-
 	if (analyse_options & FrameAnalysisOptions::DUMP_RT) {
 		if (!compute)
 			DumpRenderTargets();
-
-		// UAVs can be used by both pixel shaders and compute shaders:
-		DumpUAVs(compute);
+		DumpUAVs(compute); // UAVs can be used by both pixel shaders and compute shaders:
 	}
-
 	if (analyse_options & FrameAnalysisOptions::DUMP_DEPTH && !compute)
 		DumpDepthStencilTargets();
-
 	LeaveCriticalSection(&G->mCriticalSection);
 
-	if ((analyse_options & FrameAnalysisOptions::FMT_2D_MASK) &&
-	    (analyse_options & FrameAnalysisOptions::STEREO) &&
-	    (GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
+	if (stereo)
 		Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, false);
-	}
 
 	draw_call++;
 }
 
-void FrameAnalysisContext::_FrameAnalysisAfterUpdate(ID3D11Resource *resource,
-		FrameAnalysisOptions type_mask, wchar_t *type)
-{
-	wchar_t filename[MAX_PATH];
-	HRESULT hr;
-
+void FrameAnalysisContext::_FrameAnalysisAfterUpdate(ID3D11Resource *pResource, const FrameAnalysisOptions type_mask, wchar_t *type) {
 	analyse_options = G->cur_analyse_options;
-
 	if (!(analyse_options & type_mask))
 		return;
-
-	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK) &&
-	   (GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
+	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK) && GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE) {
 		FALogInfo("WARNING: dump_on_%S used on deferred context, but no deferred_ctx options enabled\n", type);
 		non_draw_call_dump_counter++;
 		return;
 	}
-
 	// Don't bother trying to dump as stereo - Map/Unmap/Update are inherently mono
-	analyse_options &= (FrameAnalysisOptions)~FrameAnalysisOptions::STEREO_MASK;
+	analyse_options &= static_cast<FrameAnalysisOptions>(~FrameAnalysisOptions::STEREO_MASK);
 	analyse_options |= FrameAnalysisOptions::MONO;
-
 	set_default_dump_formats(false);
 
 	EnterCriticalSectionPretty(&G->mCriticalSection);
-
-	// We don't have a view at this point to get a fully typed format, so
-	// we leave format as DXGI_FORMAT_UNKNOWN, which will use the format
-	// from the resource description.
-
-	hr = FrameAnalysisFilenameResource(filename, MAX_PATH, type, resource, true);
-	if (SUCCEEDED(hr)) {
-		DumpResource(resource, filename, analyse_options, -1, DXGI_FORMAT_UNKNOWN, 0, 0);
-	}
-
+	wchar_t filename[MAX_PATH];
+	// We don't have a view at this point to get a fully typed format, so we leave format as DXGI_FORMAT_UNKNOWN, which will use the format from the resource description.
+	const HRESULT hr = FrameAnalysisFilenameResource(filename, MAX_PATH, type, pResource, true);
+	if (SUCCEEDED(hr))
+		DumpResource(pResource, filename, analyse_options, -1, DXGI_FORMAT_UNKNOWN, 0, 0);
 	LeaveCriticalSection(&G->mCriticalSection);
-
 	non_draw_call_dump_counter++;
 }
 
-void FrameAnalysisContext::FrameAnalysisAfterUnmap(ID3D11Resource *resource)
-{
-	_FrameAnalysisAfterUpdate(resource, FrameAnalysisOptions::DUMP_ON_UNMAP, L"unmap");
+void FrameAnalysisContext::FrameAnalysisAfterUnmap(ID3D11Resource *pResource) {
+	_FrameAnalysisAfterUpdate(pResource, FrameAnalysisOptions::DUMP_ON_UNMAP, L"unmap");
 }
 
-void FrameAnalysisContext::FrameAnalysisAfterUpdate(ID3D11Resource *resource)
-{
-	_FrameAnalysisAfterUpdate(resource, FrameAnalysisOptions::DUMP_ON_UPDATE, L"update");
+void FrameAnalysisContext::FrameAnalysisAfterUpdate(ID3D11Resource *pResource) {
+	_FrameAnalysisAfterUpdate(pResource, FrameAnalysisOptions::DUMP_ON_UPDATE, L"update");
 }
 
-void FrameAnalysisContext::FrameAnalysisDump(ID3D11Resource *resource, FrameAnalysisOptions options,
-		const wchar_t *target, DXGI_FORMAT format, UINT stride, UINT offset)
-{
-	wchar_t filename[MAX_PATH];
-	NvAPI_Status nvret;
-	HRESULT hr;
-
+void FrameAnalysisContext::FrameAnalysisDump(ID3D11Resource *resource, const FrameAnalysisOptions options,
+	const wchar_t *target, const DXGI_FORMAT format, const UINT stride, const UINT offset) {
 	analyse_options = options;
-
-	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK) &&
-	   (GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
-		// If the dump command is used, the user probably expects it to
-		// just work, so turn on dumping from deferred contexts. This
-		// generally should be fine since the dump command is only used
-		// for specific resources and so we are likely to be able to
-		// fit them all in memory. We can't afford the same to
-		// analyse_options though.
+	if (!(analyse_options & FrameAnalysisOptions::DEFRD_CTX_MASK) && GetPassThroughOrigContext1()->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE)
 		analyse_options |= FrameAnalysisOptions::DEFRD_CTX_DELAY;
-	}
-
 	update_stereo_dumping_mode();
 	set_default_dump_formats(false);
 
-	if ((analyse_options & FrameAnalysisOptions::STEREO) &&
-	    (GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
+	if (analyse_options & FrameAnalysisOptions::STEREO && GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
 		// Enable reverse stereo blit for all resources we are about to dump:
-		nvret = Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, true);
-		if (nvret != NVAPI_OK) {
-			FALogErr("FrameAnalyisDump failed to enable reverse stereo blit\n");
-			// Continue anyway, we should still be able to dump in 2D...
-		}
-	}
+		if (Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, true) != NVAPI_OK)
+			FALogErr("FrameAnalyisDump failed to enable reverse stereo blit\n"); // Continue anyway, we should still be able to dump in 2D...
 
+	wchar_t filename[MAX_PATH];
 	EnterCriticalSectionPretty(&G->mCriticalSection);
-
-	hr = FrameAnalysisFilenameResource(filename, MAX_PATH, target, resource, false);
-	if (FAILED(hr)) {
-		// If the ini section and resource name makes the filename too
-		// long, try again without them:
+	HRESULT hr = FrameAnalysisFilenameResource(filename, MAX_PATH, target, resource, false);
+	if (FAILED(hr))
+		// If the ini section and resource name makes the filename too long, try again without them:
 		hr = FrameAnalysisFilenameResource(filename, MAX_PATH, L"...", resource, false);
-	}
 	if (SUCCEEDED(hr))
 		DumpResource(resource, filename, analyse_options, -1, format, stride, offset);
-
 	LeaveCriticalSection(&G->mCriticalSection);
 
-	if ((analyse_options & FrameAnalysisOptions::STEREO) &&
-	    (GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)) {
+	if (analyse_options & FrameAnalysisOptions::STEREO && GetDumpingContext()->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
 		Profiling::NvAPI_Stereo_ReverseStereoBlitControl(GetHackerDevice()->mStereoHandle, false);
-	}
-
 	non_draw_call_dump_counter++;
 }
 
 // -----------------------------------------------------------------------------------------------
 
-ULONG STDMETHODCALLTYPE FrameAnalysisContext::AddRef(void)
-{
+ULONG STDMETHODCALLTYPE FrameAnalysisContext::AddRef(void) {
 	return HackerContext::AddRef();
 }
 
-STDMETHODIMP_(ULONG) FrameAnalysisContext::Release(THIS)
-{
+STDMETHODIMP_(ULONG) FrameAnalysisContext::Release(THIS) {
 	return HackerContext::Release();
 }
 
@@ -3045,100 +2736,57 @@ HRESULT STDMETHODCALLTYPE FrameAnalysisContext::QueryInterface(
 	return HackerContext::QueryInterface(riid, ppvObject);
 }
 
-STDMETHODIMP_(void) FrameAnalysisContext::GetDevice(THIS_
-		/* [annotation] */
-		__out  ID3D11Device **ppDevice)
-{
+STDMETHODIMP_(void) FrameAnalysisContext::GetDevice(THIS_ _Out_  ID3D11Device **ppDevice) {
 	return HackerContext::GetDevice(ppDevice);
 }
 
-STDMETHODIMP FrameAnalysisContext::GetPrivateData(THIS_
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__inout  UINT *pDataSize,
-		/* [annotation] */
-		__out_bcount_opt(*pDataSize)  void *pData)
-{
+STDMETHODIMP FrameAnalysisContext::GetPrivateData(THIS_ _In_  REFGUID guid, __inout  UINT *pDataSize,
+		SAL__out_bcount_opt(*pDataSize)  void *pData) {
 	return HackerContext::GetPrivateData(guid, pDataSize, pData);
 }
 
 STDMETHODIMP FrameAnalysisContext::SetPrivateData(THIS_
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in_bcount_opt(DataSize)  const void *pData)
-{
+		_In_  REFGUID guid,
+		_In_ const UINT DataSize,
+		SAL__in_bcount_opt(DataSize)  const void *pData) {
 	return HackerContext::SetPrivateData(guid, DataSize, pData);
 }
 
-STDMETHODIMP FrameAnalysisContext::SetPrivateDataInterface(THIS_
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in_opt  const IUnknown *pData)
-{
+STDMETHODIMP FrameAnalysisContext::SetPrivateDataInterface(THIS_ _In_  REFGUID guid, __in_opt  const IUnknown *pData) {
 	return HackerContext::SetPrivateDataInterface(guid, pData);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers) ID3D11Buffer *const *ppConstantBuffers)
-{
-	FrameAnalysisLog("VSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers);
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
+		__in_ecount(NumBuffers) ID3D11Buffer *const *ppConstantBuffers) {
+	FrameAnalysisLog("VSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
-
 	HackerContext::VSSetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
 }
 
 STDMETHODIMP FrameAnalysisContext::Map(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource,
-		/* [annotation] */
-		__in  D3D11_MAP MapType,
-		/* [annotation] */
-		__in  UINT MapFlags,
-		/* [annotation] */
-		__out D3D11_MAPPED_SUBRESOURCE *pMappedResource)
-{
-	FrameAnalysisLogNoNL("Map(pResource:0x%p, Subresource:%u, MapType:%u, MapFlags:%u, pMappedResource:0x%p)",
-			pResource, Subresource, MapType, MapFlags, pMappedResource);
+		_In_  ID3D11Resource *pResource,
+		_In_  UINT Subresource,
+		_In_  D3D11_MAP MapType,
+		_In_  UINT MapFlags,
+		_Out_ D3D11_MAPPED_SUBRESOURCE *pMappedResource) {
+	FrameAnalysisLogNoNL("Map(pResource:0x%p, Subresource:%u, MapType:%u, MapFlags:%u, pMappedResource:0x%p)", pResource, Subresource, MapType, MapFlags, pMappedResource);
 	FrameAnalysisLogResourceHash(pResource);
-
 	return HackerContext::Map(pResource, Subresource, MapType, MapFlags, pMappedResource);
 }
 
-STDMETHODIMP_(void) FrameAnalysisContext::Unmap(THIS_
-		/* [annotation] */
-		__in ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource)
-{
-	FrameAnalysisLogNoNL("Unmap(pResource:0x%p, Subresource:%u)",
-			pResource, Subresource);
+STDMETHODIMP_(void) FrameAnalysisContext::Unmap(THIS_ _In_ ID3D11Resource *pResource, _In_ UINT Subresource) {
+	FrameAnalysisLogNoNL("Unmap(pResource:0x%p, Subresource:%u)", pResource, Subresource);
 	FrameAnalysisLogResourceHash(pResource);
-
 	HackerContext::Unmap(pResource, Subresource);
-
 	if (G->analyse_frame)
 		FrameAnalysisAfterUnmap(pResource);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers) ID3D11Buffer *const *ppConstantBuffers)
 {
 	FrameAnalysisLog("PSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
@@ -3149,7 +2797,6 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSSetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IASetInputLayout(THIS_
-		/* [annotation] */
 		__in_opt ID3D11InputLayout *pInputLayout)
 {
 	FrameAnalysisLog("IASetInputLayout(pInputLayout:0x%p)\n",
@@ -3159,15 +2806,10 @@ STDMETHODIMP_(void) FrameAnalysisContext::IASetInputLayout(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IASetVertexBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppVertexBuffers,
-		/* [annotation] */
 		__in_ecount(NumBuffers)  const UINT *pStrides,
-		/* [annotation] */
 		__in_ecount(NumBuffers)  const UINT *pOffsets)
 {
 	FrameAnalysisLog("IASetVertexBuffers(StartSlot:%u, NumBuffers:%u, ppVertexBuffers:0x%p, pStrides:0x%p, pOffsets:0x%p)\n",
@@ -3178,11 +2820,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::IASetVertexBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers) ID3D11Buffer *const *ppConstantBuffers)
 {
 	FrameAnalysisLog("GSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
@@ -3193,10 +2832,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSSetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSSetShader(THIS_
-		/* [annotation] */
 		__in_opt ID3D11GeometryShader *pShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	HackerContext::GSSetShader(pShader, ppClassInstances, NumClassInstances);
@@ -3207,8 +2844,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IASetPrimitiveTopology(THIS_
-		/* [annotation] */
-		__in D3D11_PRIMITIVE_TOPOLOGY Topology)
+		_In_ D3D11_PRIMITIVE_TOPOLOGY Topology)
 {
 	FrameAnalysisLog("IASetPrimitiveTopology(Topology:%u)\n",
 			Topology);
@@ -3217,11 +2853,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::IASetPrimitiveTopology(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__in_ecount(NumSamplers) ID3D11SamplerState *const *ppSamplers)
 {
 	FrameAnalysisLog("VSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
@@ -3232,11 +2865,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSSetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__in_ecount(NumSamplers) ID3D11SamplerState *const *ppSamplers)
 {
 	FrameAnalysisLog("PSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
@@ -3247,8 +2877,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSSetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::Begin(THIS_
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		_In_  ID3D11Asynchronous *pAsync)
 {
 	FrameAnalysisLogNoNL("Begin(pAsync:0x%p)", pAsync);
 	FrameAnalysisLogAsyncQuery(pAsync);
@@ -3257,8 +2886,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::Begin(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::End(THIS_
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		_In_  ID3D11Asynchronous *pAsync)
 {
 	FrameAnalysisLogNoNL("End(pAsync:0x%p)", pAsync);
 	FrameAnalysisLogAsyncQuery(pAsync);
@@ -3267,14 +2895,10 @@ STDMETHODIMP_(void) FrameAnalysisContext::End(THIS_
 }
 
 STDMETHODIMP FrameAnalysisContext::GetData(THIS_
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync,
-		/* [annotation] */
-		__out_bcount_opt(DataSize)  void *pData,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in  UINT GetDataFlags)
+		_In_  ID3D11Asynchronous *pAsync,
+		SAL__out_bcount_opt(DataSize)  void *pData,
+		_In_  UINT DataSize,
+		_In_  UINT GetDataFlags)
 {
 	HRESULT ret = HackerContext::GetData(pAsync, pData, DataSize, GetDataFlags);
 
@@ -3288,67 +2912,42 @@ STDMETHODIMP FrameAnalysisContext::GetData(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::SetPredication(THIS_
-		/* [annotation] */
 		__in_opt ID3D11Predicate *pPredicate,
-		/* [annotation] */
-		__in  BOOL PredicateValue)
-{
-	FrameAnalysisLogNoNL("SetPredication(pPredicate:0x%p, PredicateValue:%s)",
-			pPredicate, PredicateValue ? "true" : "false");
+		_In_  BOOL PredicateValue) {
+	FrameAnalysisLogNoNL("SetPredication(pPredicate:0x%p, PredicateValue:%s)", pPredicate, PredicateValue ? "true" : "false");
 	FrameAnalysisLogAsyncQuery(pPredicate);
-
 	return HackerContext::SetPredication(pPredicate, PredicateValue);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews) ID3D11ShaderResourceView *const *ppShaderResourceViews)
-{
-	FrameAnalysisLog("GSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
-			StartSlot, NumViews, ppShaderResourceViews);
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
+		__in_ecount(NumViews) ID3D11ShaderResourceView *const *ppShaderResourceViews) {
+	FrameAnalysisLog("GSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n", StartSlot, NumViews, ppShaderResourceViews);
 	FrameAnalysisLogViewArray(StartSlot, NumViews, (ID3D11View *const *)ppShaderResourceViews);
-
 	HackerContext::GSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers) ID3D11SamplerState *const *ppSamplers)
-{
-	FrameAnalysisLog("GSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
-			StartSlot, NumSamplers, ppSamplers);
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
+		__in_ecount(NumSamplers) ID3D11SamplerState *const *ppSamplers) {
+	FrameAnalysisLog("GSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n", StartSlot, NumSamplers, ppSamplers);
 	FrameAnalysisLogMiscArray(StartSlot, NumSamplers, (void *const *)ppSamplers);
-
 	HackerContext::GSSetSamplers(StartSlot, NumSamplers, ppSamplers);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMSetBlendState(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11BlendState *pBlendState,
-		/* [annotation] */
 		__in_opt  const FLOAT BlendFactor[4],
-		/* [annotation] */
-		__in  UINT SampleMask)
-{
-	FrameAnalysisLog("OMSetBlendState(pBlendState:0x%p, BlendFactor:0x%p, SampleMask:%u)\n",
-			pBlendState, BlendFactor, SampleMask); // Beware dereferencing optional BlendFactor
-
+		_In_  UINT SampleMask) {
+	FrameAnalysisLog("OMSetBlendState(pBlendState:0x%p, BlendFactor:0x%p, SampleMask:%u)\n", pBlendState, BlendFactor, SampleMask); // Beware dereferencing optional BlendFactor
 	HackerContext::OMSetBlendState(pBlendState, BlendFactor, SampleMask);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMSetDepthStencilState(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11DepthStencilState *pDepthStencilState,
-		/* [annotation] */
-		__in  UINT StencilRef)
+		_In_  UINT StencilRef)
 {
 	FrameAnalysisLog("OMSetDepthStencilState(pDepthStencilState:0x%p, StencilRef:%u)\n",
 			pDepthStencilState, StencilRef);
@@ -3357,12 +2956,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMSetDepthStencilState(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::SOSetTargets(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  const UINT *pOffsets)
+		_In_range_(0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
+		SAL__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
+		SAL__in_ecount_opt(NumBuffers)  const UINT *pOffsets)
 {
 	FrameAnalysisLog("SOSetTargets(NumBuffers:%u, ppSOTargets:0x%p, pOffsets:0x%p)\n",
 			NumBuffers, ppSOTargets, pOffsets);
@@ -3372,12 +2968,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::SOSetTargets(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::Dispatch(THIS_
-		/* [annotation] */
-		__in  UINT ThreadGroupCountX,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountY,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountZ)
+		_In_  UINT ThreadGroupCountX,
+		_In_  UINT ThreadGroupCountY,
+		_In_  UINT ThreadGroupCountZ)
 {
 	FrameAnalysisLog("Dispatch(ThreadGroupCountX:%u, ThreadGroupCountY:%u, ThreadGroupCountZ:%u)\n",
 			ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
@@ -3391,10 +2984,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::Dispatch(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DispatchIndirect(THIS_
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		_In_  ID3D11Buffer *pBufferForArgs,
+		_In_  UINT AlignedByteOffsetForArgs)
 {
 	FrameAnalysisLogNoNL("DispatchIndirect(pBufferForArgs:0x%p, AlignedByteOffsetForArgs:%u)",
 			pBufferForArgs, AlignedByteOffsetForArgs);
@@ -3409,7 +3000,6 @@ STDMETHODIMP_(void) FrameAnalysisContext::DispatchIndirect(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSSetState(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11RasterizerState *pRasterizerState)
 {
 	FrameAnalysisLog("RSSetState(pRasterizerState:0x%p)\n",
@@ -3419,10 +3009,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSSetState(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSSetViewports(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumViewports,
-		/* [annotation] */
-		__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumViewports,
+		SAL__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
 {
 	FrameAnalysisLog("RSSetViewports(NumViewports:%u, pViewports:0x%p)\n",
 			NumViewports, pViewports);
@@ -3431,10 +3019,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSSetViewports(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSSetScissorRects(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumRects,
-		/* [annotation] */
-		__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumRects,
+		SAL__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
 {
 	FrameAnalysisLog("RSSetScissorRects(NumRects:%u, pRects:0x%p)\n",
 			NumRects, pRects);
@@ -3443,21 +3029,13 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSSetScissorRects(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CopySubresourceRegion(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  UINT DstX,
-		/* [annotation] */
-		__in  UINT DstY,
-		/* [annotation] */
-		__in  UINT DstZ,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
+		_In_  ID3D11Resource *pDstResource,
+		_In_  UINT DstSubresource,
+		_In_  UINT DstX,
+		_In_  UINT DstY,
+		_In_  UINT DstZ,
+		_In_  ID3D11Resource *pSrcResource,
+		_In_  UINT SrcSubresource,
 		__in_opt  const D3D11_BOX *pSrcBox)
 {
 	FrameAnalysisLog("CopySubresourceRegion(pDstResource:0x%p, DstSubresource:%u, DstX:%u, DstY:%u, DstZ:%u, pSrcResource:0x%p, SrcSubresource:%u, pSrcBox:0x%p)\n",
@@ -3470,10 +3048,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CopySubresourceRegion(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CopyResource(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource)
+		_In_  ID3D11Resource *pDstResource,
+		_In_  ID3D11Resource *pSrcResource)
 {
 	FrameAnalysisLog("CopyResource(pDstResource:0x%p, pSrcResource:0x%p)\n",
 			pDstResource, pSrcResource);
@@ -3484,18 +3060,12 @@ STDMETHODIMP_(void) FrameAnalysisContext::CopyResource(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::UpdateSubresource(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
+		_In_  ID3D11Resource *pDstResource,
+		_In_  UINT DstSubresource,
 		__in_opt  const D3D11_BOX *pDstBox,
-		/* [annotation] */
-		__in  const void *pSrcData,
-		/* [annotation] */
-		__in  UINT SrcRowPitch,
-		/* [annotation] */
-		__in  UINT SrcDepthPitch)
+		_In_  const void *pSrcData,
+		_In_  UINT SrcRowPitch,
+		_In_  UINT SrcDepthPitch)
 {
 	FrameAnalysisLogNoNL("UpdateSubresource(pDstResource:0x%p, DstSubresource:%u, pDstBox:0x%p, pSrcData:0x%p, SrcRowPitch:%u, SrcDepthPitch:%u)",
 			pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch);
@@ -3509,12 +3079,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::UpdateSubresource(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CopyStructureCount(THIS_
-		/* [annotation] */
-		__in  ID3D11Buffer *pDstBuffer,
-		/* [annotation] */
-		__in  UINT DstAlignedByteOffset,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pSrcView)
+		_In_  ID3D11Buffer *pDstBuffer,
+		_In_  UINT DstAlignedByteOffset,
+		_In_  ID3D11UnorderedAccessView *pSrcView)
 {
 	FrameAnalysisLog("CopyStructureCount(pDstBuffer:0x%p, DstAlignedByteOffset:%u, pSrcView:0x%p)\n",
 			pDstBuffer, DstAlignedByteOffset, pSrcView);
@@ -3525,10 +3092,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CopyStructureCount(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ClearUnorderedAccessViewUint(THIS_
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const UINT Values[4])
+		_In_  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		_In_  const UINT Values[4])
 {
 	FrameAnalysisLog("ClearUnorderedAccessViewUint(pUnorderedAccessView:0x%p, Values:0x%p)\n",
 			pUnorderedAccessView, Values);
@@ -3538,10 +3103,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::ClearUnorderedAccessViewUint(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ClearUnorderedAccessViewFloat(THIS_
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const FLOAT Values[4])
+		_In_  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		_In_  const FLOAT Values[4])
 {
 	FrameAnalysisLog("ClearUnorderedAccessViewFloat(pUnorderedAccessView:0x%p, Values:0x%p)\n",
 			pUnorderedAccessView, Values);
@@ -3551,14 +3114,10 @@ STDMETHODIMP_(void) FrameAnalysisContext::ClearUnorderedAccessViewFloat(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ClearDepthStencilView(THIS_
-		/* [annotation] */
-		__in  ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in  UINT ClearFlags,
-		/* [annotation] */
-		__in  FLOAT Depth,
-		/* [annotation] */
-		__in  UINT8 Stencil)
+		_In_  ID3D11DepthStencilView *pDepthStencilView,
+		_In_  UINT ClearFlags,
+		_In_  FLOAT Depth,
+		_In_  UINT8 Stencil)
 {
 	FrameAnalysisLog("ClearDepthStencilView(pDepthStencilView:0x%p, ClearFlags:%u, Depth:%f, Stencil:%u)\n",
 			pDepthStencilView, ClearFlags, Depth, Stencil);
@@ -3568,8 +3127,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::ClearDepthStencilView(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GenerateMips(THIS_
-		/* [annotation] */
-		__in  ID3D11ShaderResourceView *pShaderResourceView)
+		_In_  ID3D11ShaderResourceView *pShaderResourceView)
 {
 	FrameAnalysisLog("GenerateMips(pShaderResourceView:0x%p)\n",
 			pShaderResourceView);
@@ -3579,8 +3137,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::GenerateMips(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::SetResourceMinLOD(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
+		_In_  ID3D11Resource *pResource,
 		FLOAT MinLOD)
 {
 	FrameAnalysisLogNoNL("SetResourceMinLOD(pResource:0x%p)",
@@ -3591,8 +3148,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::SetResourceMinLOD(THIS_
 }
 
 STDMETHODIMP_(FLOAT) FrameAnalysisContext::GetResourceMinLOD(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pResource)
+		_In_  ID3D11Resource *pResource)
 {
 	FLOAT ret = HackerContext::GetResourceMinLOD(pResource);
 
@@ -3603,16 +3159,11 @@ STDMETHODIMP_(FLOAT) FrameAnalysisContext::GetResourceMinLOD(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ResolveSubresource(THIS_
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
-		__in  DXGI_FORMAT Format)
+		_In_  ID3D11Resource *pDstResource,
+		_In_  UINT DstSubresource,
+		_In_  ID3D11Resource *pSrcResource,
+		_In_  UINT SrcSubresource,
+		_In_  DXGI_FORMAT Format)
 {
 	FrameAnalysisLog("ResolveSubresource(pDstResource:0x%p, DstSubresource:%u, pSrcResource:0x%p, SrcSubresource:%u, Format:%u)\n",
 			pDstResource, DstSubresource, pSrcResource, SrcSubresource, Format);
@@ -3623,8 +3174,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::ResolveSubresource(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ExecuteCommandList(THIS_
-		/* [annotation] */
-		__in  ID3D11CommandList *pCommandList,
+		_In_  ID3D11CommandList *pCommandList,
 		BOOL RestoreContextState)
 {
 	NvAPI_Status nvret;
@@ -3653,11 +3203,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::ExecuteCommandList(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	FrameAnalysisLog("HSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
@@ -3668,10 +3215,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSSetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSSetShader(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11HullShader *pHullShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	FrameAnalysisLogNoNL("HSSetShader(pHullShader:0x%p, ppClassInstances:0x%p, NumClassInstances:%u)",
@@ -3682,11 +3227,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	FrameAnalysisLog("HSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
@@ -3697,11 +3239,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSSetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	FrameAnalysisLog("HSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
@@ -3712,11 +3251,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSSetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	FrameAnalysisLog("DSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
@@ -3727,10 +3263,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSSetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSSetShader(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11DomainShader *pDomainShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	FrameAnalysisLogNoNL("DSSetShader(pDomainShader:0x%p, ppClassInstances:0x%p, NumClassInstances:%u)",
@@ -3741,11 +3275,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	FrameAnalysisLog("DSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
@@ -3756,11 +3287,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSSetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	FrameAnalysisLog("DSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
@@ -3771,11 +3299,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSSetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	FrameAnalysisLog("CSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
@@ -3786,13 +3311,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSSetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSSetUnorderedAccessViews(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot)  UINT NumUAVs,
-		/* [annotation] */
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot)  UINT NumUAVs,
 		__in_ecount(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
 		__in_ecount(NumUAVs)  const UINT *pUAVInitialCounts)
 {
 	FrameAnalysisLog("CSSetUnorderedAccessViews(StartSlot:%u, NumUAVs:%u, ppUnorderedAccessViews:0x%p, pUAVInitialCounts:0x%p)\n",
@@ -3810,10 +3331,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSSetUnorderedAccessViews(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSSetShader(THIS_
-		/* [annotation] */
 		__in_opt  ID3D11ComputeShader *pComputeShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	FrameAnalysisLogNoNL("CSSetShader(pComputeShader:0x%p, ppClassInstances:0x%p, NumClassInstances:%u)",
@@ -3824,11 +3343,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSSetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	FrameAnalysisLog("CSSetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
@@ -3839,11 +3355,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSSetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSSetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	FrameAnalysisLog("CSSetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
@@ -3854,11 +3367,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSSetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HackerContext::VSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
@@ -3869,11 +3379,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSGetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HackerContext::PSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
@@ -3884,11 +3391,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSGetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11PixelShader **ppPixelShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
+		_Out_  ID3D11PixelShader **ppPixelShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
 		__inout_opt  UINT *pNumClassInstances)
 {
 	HackerContext::PSGetShader(ppPixelShader, ppClassInstances, pNumClassInstances);
@@ -3902,11 +3406,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HackerContext::PSGetSamplers(StartSlot, NumSamplers, ppSamplers);
@@ -3917,11 +3418,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSGetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11VertexShader **ppVertexShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
+		_Out_  ID3D11VertexShader **ppVertexShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
 		__inout_opt  UINT *pNumClassInstances)
 {
 	HackerContext::VSGetShader(ppVertexShader, ppClassInstances, pNumClassInstances);
@@ -3935,11 +3433,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HackerContext::PSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
@@ -3950,8 +3445,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSGetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IAGetInputLayout(THIS_
-		/* [annotation] */
-		__out  ID3D11InputLayout **ppInputLayout)
+		_Out_  ID3D11InputLayout **ppInputLayout)
 {
 	HackerContext::IAGetInputLayout(ppInputLayout);
 
@@ -3960,16 +3454,11 @@ STDMETHODIMP_(void) FrameAnalysisContext::IAGetInputLayout(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IAGetVertexBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pStrides,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pOffsets)
+		_In_range_(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumBuffers,
+		SAL__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pStrides,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pOffsets)
 {
 	HackerContext::IAGetVertexBuffers(StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets);
 
@@ -3979,11 +3468,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::IAGetVertexBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IAGetIndexBuffer(THIS_
-		/* [annotation] */
 		__out_opt  ID3D11Buffer **pIndexBuffer,
-		/* [annotation] */
 		__out_opt  DXGI_FORMAT *Format,
-		/* [annotation] */
 		__out_opt  UINT *Offset)
 {
 	HackerContext::IAGetIndexBuffer(pIndexBuffer, Format, Offset);
@@ -3993,11 +3479,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::IAGetIndexBuffer(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HackerContext::GSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
@@ -4008,11 +3491,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSGetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11GeometryShader **ppGeometryShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
+		_Out_  ID3D11GeometryShader **ppGeometryShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
 		__inout_opt  UINT *pNumClassInstances)
 {
 	HackerContext::GSGetShader(ppGeometryShader, ppClassInstances, pNumClassInstances);
@@ -4026,8 +3506,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IAGetPrimitiveTopology(THIS_
-		/* [annotation] */
-		__out  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
+		_Out_  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
 {
 	HackerContext::IAGetPrimitiveTopology(pTopology);
 
@@ -4036,11 +3515,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::IAGetPrimitiveTopology(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HackerContext::VSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
@@ -4051,11 +3527,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSGetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HackerContext::VSGetSamplers(StartSlot, NumSamplers, ppSamplers);
@@ -4066,9 +3539,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSGetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GetPredication(THIS_
-		/* [annotation] */
 		__out_opt  ID3D11Predicate **ppPredicate,
-		/* [annotation] */
 		__out_opt  BOOL *pPredicateValue)
 {
 	HackerContext::GetPredication(ppPredicate, pPredicateValue);
@@ -4079,11 +3550,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::GetPredication(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HackerContext::GSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
@@ -4094,11 +3562,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSGetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::GSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HackerContext::GSGetSamplers(StartSlot, NumSamplers, ppSamplers);
@@ -4109,11 +3574,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::GSGetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMGetRenderTargets(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumViews,
-		/* [annotation] */
-		__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumViews,
+		SAL__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
 		__out_opt  ID3D11DepthStencilView **ppDepthStencilView)
 {
 	HackerContext::OMGetRenderTargets(NumViews, ppRenderTargetViews, ppDepthStencilView);
@@ -4126,18 +3588,12 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMGetRenderTargets(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMGetRenderTargetsAndUnorderedAccessViews(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumRTVs,
-		/* [annotation] */
-		__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumRTVs,
+		SAL__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
 		__out_opt  ID3D11DepthStencilView **ppDepthStencilView,
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT UAVStartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot)  UINT NumUAVs,
-		/* [annotation] */
-		__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT UAVStartSlot,
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot)  UINT NumUAVs,
+		SAL__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
 {
 	HackerContext::OMGetRenderTargetsAndUnorderedAccessViews(NumRTVs, ppRenderTargetViews, ppDepthStencilView,
 			UAVStartSlot, NumUAVs, ppUnorderedAccessViews);
@@ -4152,11 +3608,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMGetRenderTargetsAndUnorderedAccessVi
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMGetBlendState(THIS_
-		/* [annotation] */
 		__out_opt  ID3D11BlendState **ppBlendState,
-		/* [annotation] */
 		__out_opt  FLOAT BlendFactor[4],
-		/* [annotation] */
 		__out_opt  UINT *pSampleMask)
 {
 	HackerContext::OMGetBlendState(ppBlendState, BlendFactor, pSampleMask);
@@ -4166,9 +3619,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMGetBlendState(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMGetDepthStencilState(THIS_
-		/* [annotation] */
 		__out_opt  ID3D11DepthStencilState **ppDepthStencilState,
-		/* [annotation] */
 		__out_opt  UINT *pStencilRef)
 {
 	HackerContext::OMGetDepthStencilState(ppDepthStencilState, pStencilRef);
@@ -4178,9 +3629,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMGetDepthStencilState(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::SOGetTargets(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppSOTargets)
 {
 	HackerContext::SOGetTargets(NumBuffers, ppSOTargets);
@@ -4191,8 +3640,7 @@ STDMETHODIMP_(void) FrameAnalysisContext::SOGetTargets(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSGetState(THIS_
-		/* [annotation] */
-		__out  ID3D11RasterizerState **ppRasterizerState)
+		_Out_  ID3D11RasterizerState **ppRasterizerState)
 {
 	HackerContext::RSGetState(ppRasterizerState);
 
@@ -4201,10 +3649,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSGetState(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSGetViewports(THIS_
-		/* [annotation] */
 		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumViewports,
-		/* [annotation] */
-		__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
+		SAL__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
 {
 	HackerContext::RSGetViewports(pNumViewports, pViewports);
 
@@ -4213,10 +3659,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSGetViewports(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::RSGetScissorRects(THIS_
-		/* [annotation] */
 		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumRects,
-		/* [annotation] */
-		__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
+		SAL__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
 {
 	HackerContext::RSGetScissorRects(pNumRects, pRects);
 
@@ -4225,11 +3669,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::RSGetScissorRects(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HackerContext::HSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
@@ -4240,11 +3681,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSGetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11HullShader **ppHullShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
+		_Out_  ID3D11HullShader **ppHullShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
 		__inout_opt  UINT *pNumClassInstances)
 {
 	HackerContext::HSGetShader(ppHullShader, ppClassInstances, pNumClassInstances);
@@ -4258,62 +3696,39 @@ STDMETHODIMP_(void) FrameAnalysisContext::HSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
-{
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1) const UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot) const UINT NumSamplers,
+		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers) {
 	HackerContext::HSGetSamplers(StartSlot, NumSamplers, ppSamplers);
-
 	FrameAnalysisLog("HSGetSamplers(StartSlot:%u, NumSamplers:%u, ppSamplers:0x%p)\n",
 			StartSlot, NumSamplers, ppSamplers);
 	FrameAnalysisLogMiscArray(StartSlot, NumSamplers, (void *const *)ppSamplers);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::HSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
-{
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
+		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers) {
 	HackerContext::HSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
-
-	FrameAnalysisLog("HSGetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers);
+	FrameAnalysisLog("HSGetConstantBuffers(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
-{
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
+		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews) {
 	HackerContext::DSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
-
-	FrameAnalysisLog("DSGetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
-			StartSlot, NumViews, ppShaderResourceViews);
+	FrameAnalysisLog("DSGetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n", StartSlot, NumViews, ppShaderResourceViews);
 	FrameAnalysisLogViewArray(StartSlot, NumViews, (ID3D11View *const *)ppShaderResourceViews);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11DomainShader **ppDomainShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
-{
+		_Out_  ID3D11DomainShader **ppDomainShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		__inout_opt  UINT *pNumClassInstances) {
 	HackerContext::DSGetShader(ppDomainShader, ppClassInstances, pNumClassInstances);
-
-	FrameAnalysisLogNoNL("DSGetShader(ppDomainShader:0x%p, ppClassInstances:0x%p, pNumClassInstances:0x%p)",
-			ppDomainShader, ppClassInstances, pNumClassInstances);
+	FrameAnalysisLogNoNL("DSGetShader(ppDomainShader:0x%p, ppClassInstances:0x%p, pNumClassInstances:0x%p)", ppDomainShader, ppClassInstances, pNumClassInstances);
 	if (ppDomainShader)
 		FrameAnalysisLogShaderHash<ID3D11DomainShader>(*ppDomainShader);
 	else
@@ -4321,11 +3736,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HackerContext::DSGetSamplers(StartSlot, NumSamplers, ppSamplers);
@@ -4336,11 +3748,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSGetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HackerContext::DSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
@@ -4351,11 +3760,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DSGetConstantBuffers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSGetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HackerContext::CSGetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
@@ -4366,11 +3772,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSGetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSGetUnorderedAccessViews(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot)  UINT NumUAVs,
-		/* [annotation] */
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot)  UINT NumUAVs,
 		__out_ecount(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
 {
 	HackerContext::CSGetUnorderedAccessViews(StartSlot, NumUAVs, ppUnorderedAccessViews);
@@ -4381,11 +3784,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSGetUnorderedAccessViews(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSGetShader(THIS_
-		/* [annotation] */
-		__out  ID3D11ComputeShader **ppComputeShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
+		_Out_  ID3D11ComputeShader **ppComputeShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
 		__inout_opt  UINT *pNumClassInstances)
 {
 	HackerContext::CSGetShader(ppComputeShader, ppClassInstances, pNumClassInstances);
@@ -4399,11 +3799,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSGetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSGetSamplers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot)  UINT NumSamplers,
 		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HackerContext::CSGetSamplers(StartSlot, NumSamplers, ppSamplers);
@@ -4414,11 +3811,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::CSGetSamplers(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::CSGetConstantBuffers(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
 		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HackerContext::CSGetConstantBuffers(StartSlot, NumBuffers, ppConstantBuffers);
@@ -4460,7 +3854,6 @@ STDMETHODIMP_(UINT) FrameAnalysisContext::GetContextFlags(THIS)
 
 STDMETHODIMP FrameAnalysisContext::FinishCommandList(THIS_
 		BOOL RestoreDeferredContextState,
-		/* [annotation] */
 		__out_opt  ID3D11CommandList **ppCommandList)
 {
 	HRESULT ret = HackerContext::FinishCommandList(RestoreDeferredContextState, ppCommandList);
@@ -4474,10 +3867,8 @@ STDMETHODIMP FrameAnalysisContext::FinishCommandList(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSSetShader(THIS_
-		/* [annotation] */
 		__in_opt ID3D11VertexShader *pVertexShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	FrameAnalysisLogNoNL("VSSetShader(pVertexShader:0x%p, ppClassInstances:0x%p, NumClassInstances:%u)",
@@ -4488,11 +3879,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::VSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
 		__in_ecount(NumViews) ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	FrameAnalysisLog("PSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
@@ -4503,10 +3891,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSSetShaderResources(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::PSSetShader(THIS_
-		/* [annotation] */
 		__in_opt ID3D11PixelShader *pPixelShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
+		SAL__in_ecount_opt(NumClassInstances) ID3D11ClassInstance *const *ppClassInstances,
 		UINT NumClassInstances)
 {
 	FrameAnalysisLogNoNL("PSSetShader(pPixelShader:0x%p, ppClassInstances:0x%p, NumClassInstances:%u)",
@@ -4517,12 +3903,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::PSSetShader(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexed(THIS_
-		/* [annotation] */
-		__in  UINT IndexCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation)
+		_In_  UINT IndexCount,
+		_In_  UINT StartIndexLocation,
+		_In_  INT BaseVertexLocation)
 {
 	FrameAnalysisLog("DrawIndexed(IndexCount:%u, StartIndexLocation:%u, BaseVertexLocation:%u)\n",
 			IndexCount, StartIndexLocation, BaseVertexLocation);
@@ -4538,10 +3921,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexed(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::Draw(THIS_
-		/* [annotation] */
-		__in  UINT VertexCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation)
+		_In_  UINT VertexCount,
+		_In_  UINT StartVertexLocation)
 {
 	FrameAnalysisLog("Draw(VertexCount:%u, StartVertexLocation:%u)\n",
 			VertexCount, StartVertexLocation);
@@ -4557,12 +3938,9 @@ STDMETHODIMP_(void) FrameAnalysisContext::Draw(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::IASetIndexBuffer(THIS_
-		/* [annotation] */
 		__in_opt ID3D11Buffer *pIndexBuffer,
-		/* [annotation] */
-		__in DXGI_FORMAT Format,
-		/* [annotation] */
-		__in  UINT Offset)
+		_In_ DXGI_FORMAT Format,
+		_In_  UINT Offset)
 {
 	FrameAnalysisLogNoNL("IASetIndexBuffer(pIndexBuffer:0x%p, Format:%u, Offset:%u)",
 			pIndexBuffer, Format, Offset);
@@ -4572,23 +3950,13 @@ STDMETHODIMP_(void) FrameAnalysisContext::IASetIndexBuffer(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexedInstanced(THIS_
-		/* [annotation] */
-		__in  UINT IndexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
-{
-	FrameAnalysisLog("DrawIndexedInstanced(IndexCountPerInstance:%u, InstanceCount:%u, StartIndexLocation:%u, BaseVertexLocation:%i, StartInstanceLocation:%u)\n",
-			IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
-
-	HackerContext::DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation,
-			BaseVertexLocation, StartInstanceLocation);
-
+		_In_  UINT IndexCountPerInstance,
+		_In_  UINT InstanceCount,
+		_In_  UINT StartIndexLocation,
+		_In_  INT BaseVertexLocation,
+		_In_  UINT StartInstanceLocation) {
+	FrameAnalysisLog("DrawIndexedInstanced(IndexCountPerInstance:%u, InstanceCount:%u, StartIndexLocation:%u, BaseVertexLocation:%i, StartInstanceLocation:%u)\n", IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
+	HackerContext::DrawIndexedInstanced(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 	if (G->analyse_frame) {
 		DrawCallInfo call_info(DrawCall::DrawIndexedInstanced, 0, IndexCountPerInstance, InstanceCount, BaseVertexLocation, StartIndexLocation, StartInstanceLocation, NULL, 0);
 		FrameAnalysisAfterDraw(false, &call_info);
@@ -4598,20 +3966,12 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexedInstanced(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DrawInstanced(THIS_
-		/* [annotation] */
-		__in  UINT VertexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
-{
-	FrameAnalysisLog("DrawInstanced(VertexCountPerInstance:%u, InstanceCount:%u, StartVertexLocation:%u, StartInstanceLocation:%u)\n",
-			VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
-
+		_In_  UINT VertexCountPerInstance,
+		_In_  UINT InstanceCount,
+		_In_  UINT StartVertexLocation,
+		_In_  UINT StartInstanceLocation) {
+	FrameAnalysisLog("DrawInstanced(VertexCountPerInstance:%u, InstanceCount:%u, StartVertexLocation:%u, StartInstanceLocation:%u)\n", VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 	HackerContext::DrawInstanced(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
-
 	if (G->analyse_frame) {
 		DrawCallInfo call_info(DrawCall::DrawInstanced, VertexCountPerInstance, 0, InstanceCount, StartVertexLocation, 0, StartInstanceLocation, NULL, 0);
 		FrameAnalysisAfterDraw(false, &call_info);
@@ -4621,26 +3981,17 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawInstanced(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::VSSetShaderResources(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		__in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews) ID3D11ShaderResourceView *const *ppShaderResourceViews)
-{
-	FrameAnalysisLog("VSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n",
-			StartSlot, NumViews, ppShaderResourceViews);
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1)  UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot)  UINT NumViews,
+		__in_ecount(NumViews) ID3D11ShaderResourceView *const *ppShaderResourceViews) {
+	FrameAnalysisLog("VSSetShaderResources(StartSlot:%u, NumViews:%u, ppShaderResourceViews:0x%p)\n", StartSlot, NumViews, ppShaderResourceViews);
 	FrameAnalysisLogViewArray(StartSlot, NumViews, (ID3D11View *const *)ppShaderResourceViews);
-
 	HackerContext::VSSetShaderResources(StartSlot, NumViews, ppShaderResourceViews);
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMSetRenderTargets(THIS_
-		/* [annotation] */
-		__in_range(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumViews,
-		/* [annotation] */
-		__in_ecount_opt(NumViews) ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
+		_In_range_(0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT)  UINT NumViews,
+		SAL__in_ecount_opt(NumViews) ID3D11RenderTargetView *const *ppRenderTargetViews,
 		__in_opt ID3D11DepthStencilView *pDepthStencilView)
 {
 	FrameAnalysisLog("OMSetRenderTargets(NumViews:%u, ppRenderTargetViews:0x%p, pDepthStencilView:0x%p)\n",
@@ -4659,20 +4010,13 @@ STDMETHODIMP_(void) FrameAnalysisContext::OMSetRenderTargets(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::OMSetRenderTargetsAndUnorderedAccessViews(THIS_
-		/* [annotation] */
-		__in  UINT NumRTVs,
-		/* [annotation] */
-		__in_ecount_opt(NumRTVs) ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
+		_In_  UINT NumRTVs,
+		SAL__in_ecount_opt(NumRTVs) ID3D11RenderTargetView *const *ppRenderTargetViews,
 		__in_opt ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in_range(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT UAVStartSlot,
-		/* [annotation] */
-		__in  UINT NumUAVs,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs) ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts)
+		_In_range_(0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1)  UINT UAVStartSlot,
+		_In_  UINT NumUAVs,
+		SAL__in_ecount_opt(NumUAVs) ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
+		SAL__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts)
 {
 	FrameAnalysisLog("OMSetRenderTargetsAndUnorderedAccessViews(NumRTVs:%i, ppRenderTargetViews:0x%p, pDepthStencilView:0x%p, UAVStartSlot:%i, NumUAVs:%u, ppUnorderedAccessViews:0x%p, pUAVInitialCounts:0x%p)\n",
 			NumRTVs, ppRenderTargetViews, pDepthStencilView,
@@ -4719,10 +4063,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawAuto(THIS)
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexedInstancedIndirect(THIS_
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		_In_  ID3D11Buffer *pBufferForArgs,
+		_In_  UINT AlignedByteOffsetForArgs)
 {
 	FrameAnalysisLogNoNL("DrawIndexedInstancedIndirect(pBufferForArgs:0x%p, AlignedByteOffsetForArgs:%u)",
 			pBufferForArgs, AlignedByteOffsetForArgs);
@@ -4739,10 +4081,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawIndexedInstancedIndirect(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::DrawInstancedIndirect(THIS_
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		_In_  ID3D11Buffer *pBufferForArgs,
+		_In_  UINT AlignedByteOffsetForArgs)
 {
 	FrameAnalysisLogNoNL("DrawInstancedIndirect(pBufferForArgs:0x%p, AlignedByteOffsetForArgs:%u)",
 			pBufferForArgs, AlignedByteOffsetForArgs);
@@ -4759,10 +4099,8 @@ STDMETHODIMP_(void) FrameAnalysisContext::DrawInstancedIndirect(THIS_
 }
 
 STDMETHODIMP_(void) FrameAnalysisContext::ClearRenderTargetView(THIS_
-		/* [annotation] */
-		__in  ID3D11RenderTargetView *pRenderTargetView,
-		/* [annotation] */
-		__in  const FLOAT ColorRGBA[4])
+		_In_  ID3D11RenderTargetView *pRenderTargetView,
+		_In_  const FLOAT ColorRGBA[4])
 {
 	FrameAnalysisLog("ClearRenderTargetView(pRenderTargetView:0x%p, ColorRGBA:0x%p)\n",
 			pRenderTargetView, ColorRGBA);
@@ -4772,58 +4110,31 @@ STDMETHODIMP_(void) FrameAnalysisContext::ClearRenderTargetView(THIS_
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::CopySubresourceRegion1(
-		/* [annotation] */
-		_In_  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		_In_  UINT DstSubresource,
-		/* [annotation] */
-		_In_  UINT DstX,
-		/* [annotation] */
-		_In_  UINT DstY,
-		/* [annotation] */
-		_In_  UINT DstZ,
-		/* [annotation] */
-		_In_  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		_In_  UINT SrcSubresource,
-		/* [annotation] */
-		_In_opt_  const D3D11_BOX *pSrcBox,
-		/* [annotation] */
-		_In_  UINT CopyFlags)
-{
-	FrameAnalysisLog("CopySubresourceRegion1(pDstResource:0x%p, DstSubresource:%u, DstX:%u, DstY:%u, DstZ:%u, pSrcResource:0x%p, SrcSubresource:%u, pSrcBox:0x%p, CopyFlags:%u)\n",
-			pDstResource, DstSubresource, DstX, DstY, DstZ, pSrcResource, SrcSubresource, pSrcBox, CopyFlags);
+		_In_ ID3D11Resource *pDstResource, _In_ const UINT DstSubresource,
+		_In_ const UINT DstX, _In_ const UINT DstY, _In_ const UINT DstZ,
+		_In_ ID3D11Resource *pSrcResource, _In_ const UINT SrcSubresource,
+		_In_opt_ const D3D11_BOX *pSrcBox, _In_ const UINT CopyFlags) {
+	FrameAnalysisLog("CopySubresourceRegion1(pDstResource:0x%p, DstSubresource:%u, DstX:%u, DstY:%u, DstZ:%u, pSrcResource:0x%p, SrcSubresource:%u, pSrcBox:0x%p, CopyFlags:%u)\n", pDstResource, DstSubresource, DstX, DstY, DstZ, pSrcResource, SrcSubresource, pSrcBox, CopyFlags);
 	FrameAnalysisLogResource(-1, "Src", pSrcResource);
 	FrameAnalysisLogResource(-1, "Dst", pDstResource);
-
 	HackerContext::CopySubresourceRegion1(pDstResource, DstSubresource, DstX, DstY, DstZ, pSrcResource, SrcSubresource, pSrcBox, CopyFlags);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::UpdateSubresource1(
-		/* [annotation] */
-		_In_  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		_In_  UINT DstSubresource,
-		/* [annotation] */
-		_In_opt_  const D3D11_BOX *pDstBox,
-		/* [annotation] */
-		_In_  const void *pSrcData,
-		/* [annotation] */
-		_In_  UINT SrcRowPitch,
-		/* [annotation] */
-		_In_  UINT SrcDepthPitch,
-		/* [annotation] */
-		_In_  UINT CopyFlags)
-{
-	FrameAnalysisLogNoNL("UpdateSubresource1(pDstResource:0x%p, DstSubresource:%u, pDstBox:0x%p, pSrcData:0x%p, SrcRowPitch:%u, SrcDepthPitch:%u, CopyFlags:%u)",
-			pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch, CopyFlags);
+	_In_ ID3D11Resource *pDstResource,
+	_In_ const UINT DstSubresource,
+	_In_opt_ const D3D11_BOX *pDstBox,
+	_In_  const void *pSrcData,
+	_In_ const UINT SrcRowPitch,
+	_In_ const UINT SrcDepthPitch,
+	_In_ const UINT CopyFlags
+) {
+	FrameAnalysisLogNoNL("UpdateSubresource1(pDstResource:0x%p, DstSubresource:%u, pDstBox:0x%p, pSrcData:0x%p, SrcRowPitch:%u, SrcDepthPitch:%u, CopyFlags:%u)", pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch, CopyFlags);
 	FrameAnalysisLogResourceHash(pDstResource);
-
 	HackerContext::UpdateSubresource1(pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch, CopyFlags);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::DiscardResource(
-		/* [annotation] */
 		_In_  ID3D11Resource *pResource)
 {
 	FrameAnalysisLogNoNL("DiscardResource(pResource:0x%p)",
@@ -4834,7 +4145,6 @@ void STDMETHODCALLTYPE FrameAnalysisContext::DiscardResource(
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::DiscardView(
-		/* [annotation] */
 		_In_  ID3D11View *pResourceView)
 {
 	FrameAnalysisLog("DiscardView(pResourceView:0x%p)\n",
@@ -4845,15 +4155,10 @@ void STDMETHODCALLTYPE FrameAnalysisContext::DiscardView(
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::VSSetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
 {
 	FrameAnalysisLog("VSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
@@ -4864,15 +4169,10 @@ void STDMETHODCALLTYPE FrameAnalysisContext::VSSetConstantBuffers1(
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::HSSetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
 {
 	FrameAnalysisLog("HSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
@@ -4883,233 +4183,137 @@ void STDMETHODCALLTYPE FrameAnalysisContext::HSSetConstantBuffers1(
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::DSSetConstantBuffers1(
-		/* [annotation] */
-		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1) const UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot) const UINT NumBuffers,
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
-		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
-{
-	FrameAnalysisLog("DSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants) {
+	FrameAnalysisLog("DSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
-
 	HackerContext::DSSetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::GSSetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
-		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
-{
-	FrameAnalysisLog("GSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants) {
+	FrameAnalysisLog("GSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
-
 	HackerContext::GSSetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::PSSetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
-		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
-{
-	FrameAnalysisLog("PSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants) {
+	FrameAnalysisLog("PSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
-
 	HackerContext::PSSetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::CSSetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers,
-		/* [annotation] */
 		_In_reads_opt_(NumBuffers)  const UINT *pFirstConstant,
-		/* [annotation] */
-		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants)
-{
-	FrameAnalysisLog("CSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+		_In_reads_opt_(NumBuffers)  const UINT *pNumConstants) {
+	FrameAnalysisLog("CSSetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
-
 	HackerContext::CSSetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::VSGetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::VSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("VSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("VSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::HSGetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::HSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("HSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("HSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::DSGetConstantBuffers1(
-		/* [annotation] */
-		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
-		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1) const UINT StartSlot,
+		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot) const UINT NumBuffers,
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::DSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("DSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("DSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::GSGetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::GSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("GSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("GSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::PSGetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::PSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("PSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("PSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::CSGetConstantBuffers1(
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1)  UINT StartSlot,
-		/* [annotation] */
 		_In_range_(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot)  UINT NumBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  ID3D11Buffer **ppConstantBuffers,
-		/* [annotation] */
 		_Out_writes_opt_(NumBuffers)  UINT *pFirstConstant,
-		/* [annotation] */
-		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants)
-{
+		_Out_writes_opt_(NumBuffers)  UINT *pNumConstants) {
 	HackerContext::CSGetConstantBuffers1(StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
-
-	FrameAnalysisLog("CSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n",
-			StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
+	FrameAnalysisLog("CSGetConstantBuffers1(StartSlot:%u, NumBuffers:%u, ppConstantBuffers:0x%p, pFirstConstant:0x%p, pNumConstants:0x%p)\n", StartSlot, NumBuffers, ppConstantBuffers, pFirstConstant, pNumConstants);
 	FrameAnalysisLogResourceArray(StartSlot, NumBuffers, (ID3D11Resource *const *)ppConstantBuffers);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::SwapDeviceContextState(
-		/* [annotation] */
 		_In_  ID3DDeviceContextState *pState,
-		/* [annotation] */
-		_Out_opt_  ID3DDeviceContextState **ppPreviousState)
-{
-	FrameAnalysisLog("SwapDeviceContextState(pState:0x%p, ppPreviousState:0x%p)\n",
-			pState, ppPreviousState);
-
+		_Out_opt_  ID3DDeviceContextState **ppPreviousState) {
+	FrameAnalysisLog("SwapDeviceContextState(pState:0x%p, ppPreviousState:0x%p)\n", pState, ppPreviousState);
 	HackerContext::SwapDeviceContextState(pState, ppPreviousState);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::ClearView(
-		/* [annotation] */
 		_In_  ID3D11View *pView,
-		/* [annotation] */
 		_In_  const FLOAT Color[4],
-		/* [annotation] */
 		_In_reads_opt_(NumRects)  const D3D11_RECT *pRect,
-		UINT NumRects)
-{
-	FrameAnalysisLog("ClearView(pView:0x%p, Color:0x%p, pRect:0x%p)\n",
-			pView, Color, pRect);
+		UINT NumRects) {
+	FrameAnalysisLog("ClearView(pView:0x%p, Color:0x%p, pRect:0x%p)\n", pView, Color, pRect);
 	FrameAnalysisLogView(-1, "", pView);
-
 	HackerContext::ClearView(pView, Color, pRect, NumRects);
 }
 
 void STDMETHODCALLTYPE FrameAnalysisContext::DiscardView1(
-		/* [annotation] */
 		_In_  ID3D11View *pResourceView,
-		/* [annotation] */
 		_In_reads_opt_(NumRects)  const D3D11_RECT *pRects,
-		UINT NumRects)
-{
-	FrameAnalysisLog("DiscardView1(pResourceView:0x%p, pRects:0x%p)\n",
-			pResourceView, pRects);
+		UINT NumRects) {
+	FrameAnalysisLog("DiscardView1(pResourceView:0x%p, pRects:0x%p)\n", pResourceView, pRects);
 	FrameAnalysisLogView(-1, "", pResourceView);
-
 	HackerContext::DiscardView1(pResourceView, pRects, NumRects);
 }

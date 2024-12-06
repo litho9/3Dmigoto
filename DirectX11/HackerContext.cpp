@@ -3060,23 +3060,15 @@ void STDMETHODCALLTYPE HackerContext::CopySubresourceRegion1(
 }
 
 void STDMETHODCALLTYPE HackerContext::UpdateSubresource1(
-	/* [annotation] */
-	_In_  ID3D11Resource *pDstResource,
-	/* [annotation] */
-	_In_  UINT DstSubresource,
-	/* [annotation] */
-	_In_opt_  const D3D11_BOX *pDstBox,
-	/* [annotation] */
-	_In_  const void *pSrcData,
-	/* [annotation] */
-	_In_  UINT SrcRowPitch,
-	/* [annotation] */
-	_In_  UINT SrcDepthPitch,
-	/* [annotation] */
-	_In_  UINT CopyFlags)
-{
+	_In_ ID3D11Resource *pDstResource,
+	_In_ const UINT DstSubresource,
+	_In_opt_ const D3D11_BOX *pDstBox,
+	_In_ const void *pSrcData,
+	_In_ const UINT SrcRowPitch,
+	_In_ const UINT SrcDepthPitch,
+	_In_ const UINT CopyFlags
+) {
 	mOrigContext1->UpdateSubresource1(pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch, CopyFlags);
-
 	// TODO: Track resource hash updates
 }
 

@@ -860,7 +860,7 @@ void ClearNotices()
 	LeaveCriticalSection(&notices.lock);
 }
 
-void LogOverlayW(LogLevel level, wchar_t *fmt, ...)
+void LogOverlayW(const LogLevel level, const wchar_t *fmt, ...)
 {
 	wchar_t msg[maxstring];
 	va_list ap;
@@ -889,16 +889,14 @@ void LogOverlayW(LogLevel level, wchar_t *fmt, ...)
 // to LogOverlayW, because that would reverse the meaning of %s and %S in the
 // format string. Instead we do our own vLogInfo and _vsnprintf_s to handle the
 // format string correctly and convert the result to a wide string.
-void LogOverlay(LogLevel level, char *fmt, ...)
-{
-	char amsg[maxstring];
-	wchar_t wmsg[maxstring];
+void LogOverlay(const LogLevel level, const char *fmt, ...) {
 	va_list ap;
-
 	va_start(ap, fmt);
 	vLogInfo(fmt, ap);
 
 	if (!log_levels[level].hide_in_release || G->hunting) {
+		char amsg[maxstring];
+		wchar_t wmsg[maxstring];
 		// Using _vsnprintf_s so we don't crash if the message is too long for
 		// the buffer, and truncate it instead - unless we can automatically
 		// wrap the message, which DirectXTK doesn't appear to support, who

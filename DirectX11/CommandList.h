@@ -485,8 +485,7 @@ public:
 	void emplace(uint32_t hash, ID3D11Resource *resource, ID3D11Device *device);
 };
 
-class CustomResource
-{
+class CustomResource {
 public:
 	wstring name;
 
@@ -511,8 +510,7 @@ public:
 	wstring filename;
 	bool substantiated;
 
-	// Used to override description when copying or synthesise resources
-	// from scratch:
+	// Used to override description when copying or synthesise resources from scratch:
 	CustomResourceType override_type;
 	CustomResourceMode override_mode;
 	CustomResourceBindFlags override_bind_flags;

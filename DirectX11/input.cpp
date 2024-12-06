@@ -486,8 +486,7 @@ bool RegisterIniKeyBinding(LPCWSTR app, LPCWSTR iniKey,
 // for cases where we might want to show a key binding on the overlay.
 // "no_modifiers VK_F10" -> "F10"
 // "ctrl alt no_shift VK_F10" -> "Ctrl+Alt+F10"
-wstring user_friendly_ini_key_binding(LPCWSTR app, LPCWSTR iniKey)
-{
+wstring user_friendly_ini_key_binding(LPCWSTR app, LPCWSTR iniKey) {
 	wchar_t keyName[MAX_PATH];
 	wstring ret;
 
@@ -519,58 +518,37 @@ wstring user_friendly_ini_key_binding(LPCWSTR app, LPCWSTR iniKey)
 	return ret;
 }
 
-void ClearKeyBindings()
-{
-	std::vector<class InputAction *>::iterator i;
-
-	for (i = actions.begin(); i != actions.end(); i++)
+void ClearKeyBindings() {
+	for (auto i = actions.begin(); i != actions.end(); ++i)
 		delete *i;
-
 	actions.clear();
 }
 
-static bool CheckForegroundWindow()
-{
+static bool CheckForegroundWindow() {
+	if (!G->check_foreground_window) return true;
 	DWORD pid;
-
-	if (!G->check_foreground_window)
-		return true;
-
 	GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-
-	return (pid == GetCurrentProcessId());
+	return pid == GetCurrentProcessId();
 }
 
-bool DispatchInputEvents(HackerDevice *device)
-{
-	std::vector<class InputAction *>::iterator i;
-	class InputAction *action;
-	bool input_processed = false;
+bool DispatchInputEvents(HackerDevice *device) {
 	static time_t last_time = 0;
-	time_t now = time(NULL);
-	int j;
+	const time_t now = time(nullptr);
 
 	if (!CheckForegroundWindow())
 		return false;
 
-	for (j = 0; j < 4; j++) {
-		// Stagger polling controllers that were not connected last
-		// frame over four seconds to minimise performance impact,
+	for (int j = 0; j < 4; j++) {
+		// Stagger polling controllers that were not connected last frame over four seconds to minimise performance impact,
 		// which has been observed to be extremely significant.
-		if (!XInputState[j].connected && ((now == last_time) || (now % 4 != j)))
-			continue;
-
-		XInputState[j].connected =
-			(_XInputGetState(j, &XInputState[j].state) == ERROR_SUCCESS);
+		if (XInputState[j].connected || now != last_time && now % 4 == j)
+			XInputState[j].connected = _XInputGetState(j, &XInputState[j].state) == ERROR_SUCCESS;
 	}
 
 	last_time = now;
 
-	for (i = actions.begin(); i != actions.end(); i++) {
-		action = *i;
-
-		input_processed |= action->Dispatch(device);
-	}
-
+	bool input_processed = false;
+	for (auto i = actions.begin(); i != actions.end(); ++i)
+		input_processed |= (*i)->Dispatch(device);
 	return input_processed;
 }

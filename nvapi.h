@@ -7403,7 +7403,7 @@ typedef struct _NV_GSYNC_DISPLAY
 //! \retval ::NVAPI_NVIDIA_DEVICE_NOT_FOUND        The queried Graphics system does not have any Sync Device.
 //! \retval ::NVAPI_INSUFFICIENT_BUFFER            When the actual number of GPUs/displays in the topology exceed the number of elements allocated for SyncGPUs/SyncDisplays respectively.
 //!
-//! \ingroup gsyncapi
+//! \ingroup gsyncapi__in_range
 ///////////////////////////////////////////////////////////////////////////////
 NVAPI_INTERFACE NvAPI_GSync_GetTopology(__in NvGSyncDeviceHandle hNvGSyncDevice, __inout_opt NvU32 *gsyncGpuCount,  __out_ecount_part_opt(*gsyncGpuCount, *gsyncGpuCount) NV_GSYNC_GPU *gsyncGPUs,
                                         __inout_opt NvU32 *gsyncDisplayCount, __out_ecount_part_opt(*gsyncDisplayCount, *gsyncDisplayCount) NV_GSYNC_DISPLAY *gsyncDisplays);

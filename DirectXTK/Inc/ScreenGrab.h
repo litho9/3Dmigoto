@@ -32,9 +32,7 @@
 #include <functional>
 #include <stdint.h>
 
-
-namespace DirectX
-{
+namespace DirectX {
     HRESULT __cdecl SaveDDSTextureToFile(
         _In_ ID3D11DeviceContext* pContext,
         _In_ ID3D11Resource* pSource,

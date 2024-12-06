@@ -14,7 +14,6 @@
 // vtable - changes to IUnknown functions seem ok, but not to ID3D11DeviceChild
 // or ID3D11DeviceContext1 functions. Quite bizarre that it is so picky.
 
-
 // We are defining CINTERFACE here to get the C declarations of the
 // ID3D11DeviceContext1, which uses a struct with function pointers for the
 // vtable. That avoids some nasty casting which we would have to do with the
@@ -65,23 +64,20 @@ static CRITICAL_SECTION context_map_lock;
 
 // Holds all the function pointers that we need to call into the real original
 // context:
-static struct ID3D11DeviceContext1Vtbl orig_vtable;
+static ID3D11DeviceContext1Vtbl orig_vtable;
 
 static bool hooks_installed = false;
 
 
-ID3D11DeviceContext1* lookup_hooked_context(ID3D11DeviceContext1 *orig_context)
-{
-	ContextMap::iterator i;
-
+ID3D11DeviceContext1* lookup_hooked_context(const ID3D11DeviceContext1 *orig_context) {
 	if (!hooks_installed)
-		return NULL;
+		return nullptr;
 
 	EnterCriticalSectionPretty(&context_map_lock);
-	i = context_map.find(orig_context);
+	const auto i = context_map.find(orig_context);
 	if (i == context_map.end()) {
 		LeaveCriticalSection(&context_map_lock);
-		return NULL;
+		return nullptr;
 	}
 	LeaveCriticalSection(&context_map_lock);
 
@@ -116,13 +112,12 @@ static ULONG STDMETHODCALLTYPE AddRef(ID3D11DeviceContext1 *This)
 
 static ULONG STDMETHODCALLTYPE Release(ID3D11DeviceContext1 *This)
 {
-	ContextMap::iterator i;
 	ULONG ref;
 
 	HookDebug("HookedContext::Release()\n");
 
 	EnterCriticalSectionPretty(&context_map_lock);
-	i = context_map.find(This);
+	const auto i = context_map.find(This);
 	if (i != context_map.end()) {
 		ref = ID3D11DeviceContext1_Release(i->second);
 		if (!ref)
@@ -137,8 +132,7 @@ static ULONG STDMETHODCALLTYPE Release(ID3D11DeviceContext1 *This)
 
 // ID3D11DeviceChild
 static void STDMETHODCALLTYPE GetDevice(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11Device **ppDevice)
+		SAL__out  ID3D11Device **ppDevice)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -151,31 +145,20 @@ static void STDMETHODCALLTYPE GetDevice(ID3D11DeviceContext1 *This,
 }
 
 static HRESULT STDMETHODCALLTYPE GetPrivateData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__inout  UINT *pDataSize,
-		/* [annotation] */
-		__out_bcount_opt( *pDataSize )  void *pData)
-{
+		SAL__in  REFGUID guid,
+		SAL__inout  UINT *pDataSize,
+		SAL__out_bcount_opt( *pDataSize )  void *pData) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::GetPrivateData()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_GetPrivateData(context, guid, pDataSize, pData);
-
 	return orig_vtable.GetPrivateData(This, guid, pDataSize, pData);
 }
 
 static HRESULT STDMETHODCALLTYPE SetPrivateData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in_bcount_opt( DataSize )  const void *pData)
-{
+		SAL__in  REFGUID guid,
+		SAL__in const UINT DataSize,
+		SAL__in_bcount_opt( DataSize )  const void *pData) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
 	HookDebug("HookedContext::SetPrivateData()\n");
@@ -187,10 +170,8 @@ static HRESULT STDMETHODCALLTYPE SetPrivateData(ID3D11DeviceContext1 *This,
 }
 
 static HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in_opt  const IUnknown *pData)
+		SAL__in  REFGUID guid,
+		SAL__in_opt  const IUnknown *pData)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -204,31 +185,20 @@ static HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(ID3D11DeviceContext1 *T
 
 // ID3D11DeviceContext1
 static void STDMETHODCALLTYPE VSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::VSSetConstantBuffers()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_VSSetConstantBuffers(context,  StartSlot, NumBuffers, ppConstantBuffers);
-
 	return orig_vtable.VSSetConstantBuffers(This,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 
 static void STDMETHODCALLTYPE PSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
 	HookDebug("HookedContext::PSSetShaderResources()\n");
@@ -240,11 +210,9 @@ static void STDMETHODCALLTYPE PSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11PixelShader *pPixelShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11PixelShader *pPixelShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -257,12 +225,9 @@ static void STDMETHODCALLTYPE PSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -275,11 +240,9 @@ static void STDMETHODCALLTYPE PSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11VertexShader *pVertexShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11VertexShader *pVertexShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -292,12 +255,9 @@ static void STDMETHODCALLTYPE VSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DrawIndexed(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT IndexCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation)
+		SAL__in const UINT IndexCount,
+		SAL__in const UINT StartIndexLocation,
+		SAL__in const INT BaseVertexLocation)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -310,10 +270,8 @@ static void STDMETHODCALLTYPE DrawIndexed(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE Draw(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT VertexCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation)
+		SAL__in const UINT VertexCount,
+		SAL__in const UINT StartVertexLocation)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -326,16 +284,11 @@ static void STDMETHODCALLTYPE Draw(ID3D11DeviceContext1 *This,
 }
 
 static HRESULT STDMETHODCALLTYPE Map(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource,
-		/* [annotation] */
-		__in  D3D11_MAP MapType,
-		/* [annotation] */
-		__in  UINT MapFlags,
-		/* [annotation] */
-		__out  D3D11_MAPPED_SUBRESOURCE *pMappedResource)
+		SAL__in  ID3D11Resource *pResource,
+		SAL__in const UINT Subresource,
+		SAL__in const D3D11_MAP MapType,
+		SAL__in const UINT MapFlags,
+		SAL__out  D3D11_MAPPED_SUBRESOURCE *pMappedResource)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -348,10 +301,8 @@ static HRESULT STDMETHODCALLTYPE Map(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE Unmap(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource)
+		SAL__in  ID3D11Resource *pResource,
+		SAL__in const UINT Subresource)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -364,12 +315,9 @@ static void STDMETHODCALLTYPE Unmap(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -382,8 +330,7 @@ static void STDMETHODCALLTYPE PSSetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IASetInputLayout(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11InputLayout *pInputLayout)
+		SAL__in_opt  ID3D11InputLayout *pInputLayout)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -396,16 +343,11 @@ static void STDMETHODCALLTYPE IASetInputLayout(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IASetVertexBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppVertexBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  const UINT *pStrides,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  const UINT *pOffsets)
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppVertexBuffers,
+		SAL__in_ecount(NumBuffers)  const UINT *pStrides,
+		SAL__in_ecount(NumBuffers)  const UINT *pOffsets)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -418,12 +360,9 @@ static void STDMETHODCALLTYPE IASetVertexBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IASetIndexBuffer(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11Buffer *pIndexBuffer,
-		/* [annotation] */
-		__in  DXGI_FORMAT Format,
-		/* [annotation] */
-		__in  UINT Offset)
+		SAL__in_opt  ID3D11Buffer *pIndexBuffer,
+		SAL__in const DXGI_FORMAT Format,
+		SAL__in const UINT Offset)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -436,16 +375,11 @@ static void STDMETHODCALLTYPE IASetIndexBuffer(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DrawIndexedInstanced(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT IndexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
+		SAL__in const UINT IndexCountPerInstance,
+		SAL__in const UINT InstanceCount,
+		SAL__in const UINT StartIndexLocation,
+		SAL__in const INT BaseVertexLocation,
+		SAL__in const UINT StartInstanceLocation)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -458,32 +392,21 @@ static void STDMETHODCALLTYPE DrawIndexedInstanced(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DrawInstanced(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT VertexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
-{
+		SAL__in const UINT VertexCountPerInstance,
+		SAL__in const UINT InstanceCount,
+		SAL__in const UINT StartVertexLocation,
+		SAL__in const UINT StartInstanceLocation) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::DrawInstanced()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_DrawInstanced(context,  VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
-
 	return orig_vtable.DrawInstanced(This,  VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 }
 
 static void STDMETHODCALLTYPE GSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -496,11 +419,9 @@ static void STDMETHODCALLTYPE GSSetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11GeometryShader *pShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11GeometryShader *pShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -513,8 +434,7 @@ static void STDMETHODCALLTYPE GSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IASetPrimitiveTopology(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  D3D11_PRIMITIVE_TOPOLOGY Topology)
+		SAL__in const D3D11_PRIMITIVE_TOPOLOGY Topology)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -527,12 +447,9 @@ static void STDMETHODCALLTYPE IASetPrimitiveTopology(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -545,12 +462,9 @@ static void STDMETHODCALLTYPE VSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -563,8 +477,7 @@ static void STDMETHODCALLTYPE VSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE Begin(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		SAL__in  ID3D11Asynchronous *pAsync)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -577,8 +490,7 @@ static void STDMETHODCALLTYPE Begin(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE End(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		SAL__in  ID3D11Asynchronous *pAsync)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -591,14 +503,10 @@ static void STDMETHODCALLTYPE End(ID3D11DeviceContext1 *This,
 }
 
 static HRESULT STDMETHODCALLTYPE GetData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync,
-		/* [annotation] */
-		__out_bcount_opt( DataSize )  void *pData,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in  UINT GetDataFlags)
+		SAL__in  ID3D11Asynchronous *pAsync,
+		SAL__out_bcount_opt( DataSize )  void *pData,
+		SAL__in const UINT DataSize,
+		SAL__in const UINT GetDataFlags)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -611,10 +519,8 @@ static HRESULT STDMETHODCALLTYPE GetData(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE SetPredication(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11Predicate *pPredicate,
-		/* [annotation] */
-		__in  BOOL PredicateValue)
+		SAL__in_opt  ID3D11Predicate *pPredicate,
+		SAL__in const BOOL PredicateValue)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -627,12 +533,9 @@ static void STDMETHODCALLTYPE SetPredication(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -645,12 +548,9 @@ static void STDMETHODCALLTYPE GSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -663,133 +563,84 @@ static void STDMETHODCALLTYPE GSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE OMSetRenderTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount_opt(NumViews)  ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilView *pDepthStencilView)
-{
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumViews,
+		SAL__in_ecount_opt(NumViews)  ID3D11RenderTargetView *const *ppRenderTargetViews,
+		SAL__in_opt  ID3D11DepthStencilView *pDepthStencilView) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::OMSetRenderTargets()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_OMSetRenderTargets(context,  NumViews, ppRenderTargetViews, pDepthStencilView);
-
 	return orig_vtable.OMSetRenderTargets(This,  NumViews, ppRenderTargetViews, pDepthStencilView);
 }
 
 static void STDMETHODCALLTYPE OMSetRenderTargetsAndUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT NumRTVs,
-		/* [annotation] */
-		__in_ecount_opt(NumRTVs)  ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT UAVStartSlot,
-		/* [annotation] */
-		__in  UINT NumUAVs,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts)
-{
+		SAL__in const UINT NumRTVs,
+		SAL__in_ecount_opt(NumRTVs)  ID3D11RenderTargetView *const *ppRenderTargetViews,
+		SAL__in_opt  ID3D11DepthStencilView *pDepthStencilView,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT UAVStartSlot,
+		SAL__in const UINT NumUAVs,
+		SAL__in_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
+		SAL__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::OMSetRenderTargetsAndUnorderedAccessViews()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_OMSetRenderTargetsAndUnorderedAccessViews(context,  NumRTVs, ppRenderTargetViews, pDepthStencilView, UAVStartSlot, NumUAVs, ppUnorderedAccessViews, pUAVInitialCounts);
-
 	return orig_vtable.OMSetRenderTargetsAndUnorderedAccessViews(This,  NumRTVs, ppRenderTargetViews, pDepthStencilView, UAVStartSlot, NumUAVs, ppUnorderedAccessViews, pUAVInitialCounts);
 }
 
 static void STDMETHODCALLTYPE OMSetBlendState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11BlendState *pBlendState,
-		/* [annotation] */
-		__in_opt  const FLOAT BlendFactor[ 4 ],
-		/* [annotation] */
-		__in  UINT SampleMask)
-{
+		SAL__in_opt  ID3D11BlendState *pBlendState,
+		SAL__in_opt  const FLOAT BlendFactor[ 4 ],
+		SAL__in const UINT SampleMask) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::OMSetBlendState()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_OMSetBlendState(context,  pBlendState, BlendFactor, SampleMask);
-
 	return orig_vtable.OMSetBlendState(This,  pBlendState, BlendFactor, SampleMask);
 }
 
 static void STDMETHODCALLTYPE OMSetDepthStencilState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilState *pDepthStencilState,
-		/* [annotation] */
-		__in  UINT StencilRef)
-{
+		SAL__in_opt  ID3D11DepthStencilState *pDepthStencilState,
+		SAL__in const UINT StencilRef) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::OMSetDepthStencilState()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_OMSetDepthStencilState(context,  pDepthStencilState, StencilRef);
-
 	return orig_vtable.OMSetDepthStencilState(This,  pDepthStencilState, StencilRef);
 }
 
 static void STDMETHODCALLTYPE SOSetTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  const UINT *pOffsets)
-{
+		_In_range_( 0, D3D11_SO_BUFFER_SLOT_COUNT) const UINT NumBuffers,
+		SAL__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
+		SAL__in_ecount_opt(NumBuffers)  const UINT *pOffsets) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::SOSetTargets()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_SOSetTargets(context,  NumBuffers, ppSOTargets, pOffsets);
-
 	return orig_vtable.SOSetTargets(This,  NumBuffers, ppSOTargets, pOffsets);
 }
-static void STDMETHODCALLTYPE DrawAuto(ID3D11DeviceContext1 *This)
-{
+
+static void STDMETHODCALLTYPE DrawAuto(ID3D11DeviceContext1 *This) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::DrawAuto()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_DrawAuto(context);
-
 	return orig_vtable.DrawAuto(This);
 }
 
 static void STDMETHODCALLTYPE DrawIndexedInstancedIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
-{
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs) {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
-
 	HookDebug("HookedContext::DrawIndexedInstancedIndirect()\n");
-
 	if (context)
 		return ID3D11DeviceContext1_DrawIndexedInstancedIndirect(context,  pBufferForArgs, AlignedByteOffsetForArgs);
-
 	return orig_vtable.DrawIndexedInstancedIndirect(This,  pBufferForArgs, AlignedByteOffsetForArgs);
 }
 
 static void STDMETHODCALLTYPE DrawInstancedIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -802,12 +653,9 @@ static void STDMETHODCALLTYPE DrawInstancedIndirect(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountX,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountY,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountZ)
+		SAL__in const UINT ThreadGroupCountX,
+		SAL__in const UINT ThreadGroupCountY,
+		SAL__in const UINT ThreadGroupCountZ)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -820,10 +668,8 @@ static void STDMETHODCALLTYPE Dispatch(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DispatchIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -836,8 +682,7 @@ static void STDMETHODCALLTYPE DispatchIndirect(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSSetState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11RasterizerState *pRasterizerState)
+		SAL__in_opt  ID3D11RasterizerState *pRasterizerState)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -850,10 +695,8 @@ static void STDMETHODCALLTYPE RSSetState(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSSetViewports(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumViewports,
-		/* [annotation] */
-		__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) const UINT NumViewports,
+		SAL__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -866,10 +709,8 @@ static void STDMETHODCALLTYPE RSSetViewports(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSSetScissorRects(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumRects,
-		/* [annotation] */
-		__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) const UINT NumRects,
+		SAL__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -882,22 +723,14 @@ static void STDMETHODCALLTYPE RSSetScissorRects(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CopySubresourceRegion(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  UINT DstX,
-		/* [annotation] */
-		__in  UINT DstY,
-		/* [annotation] */
-		__in  UINT DstZ,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
-		__in_opt  const D3D11_BOX *pSrcBox)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in const UINT DstX,
+		SAL__in const UINT DstY,
+		SAL__in const UINT DstZ,
+		SAL__in  ID3D11Resource *pSrcResource,
+		SAL__in const UINT SrcSubresource,
+		SAL__in_opt  const D3D11_BOX *pSrcBox)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -910,10 +743,8 @@ static void STDMETHODCALLTYPE CopySubresourceRegion(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CopyResource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in  ID3D11Resource *pSrcResource)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -926,18 +757,12 @@ static void STDMETHODCALLTYPE CopyResource(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE UpdateSubresource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in_opt  const D3D11_BOX *pDstBox,
-		/* [annotation] */
-		__in  const void *pSrcData,
-		/* [annotation] */
-		__in  UINT SrcRowPitch,
-		/* [annotation] */
-		__in  UINT SrcDepthPitch)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in_opt  const D3D11_BOX *pDstBox,
+		SAL__in  const void *pSrcData,
+		SAL__in const UINT SrcRowPitch,
+		SAL__in const UINT SrcDepthPitch)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -950,12 +775,9 @@ static void STDMETHODCALLTYPE UpdateSubresource(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CopyStructureCount(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pDstBuffer,
-		/* [annotation] */
-		__in  UINT DstAlignedByteOffset,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pSrcView)
+		SAL__in  ID3D11Buffer *pDstBuffer,
+		SAL__in const UINT DstAlignedByteOffset,
+		SAL__in  ID3D11UnorderedAccessView *pSrcView)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -968,10 +790,8 @@ static void STDMETHODCALLTYPE CopyStructureCount(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE ClearRenderTargetView(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11RenderTargetView *pRenderTargetView,
-		/* [annotation] */
-		__in  const FLOAT ColorRGBA[ 4 ])
+		SAL__in  ID3D11RenderTargetView *pRenderTargetView,
+		SAL__in  const FLOAT ColorRGBA[ 4 ])
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -984,10 +804,8 @@ static void STDMETHODCALLTYPE ClearRenderTargetView(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE ClearUnorderedAccessViewUint(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const UINT Values[ 4 ])
+		SAL__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		SAL__in  const UINT Values[ 4 ])
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1000,10 +818,8 @@ static void STDMETHODCALLTYPE ClearUnorderedAccessViewUint(ID3D11DeviceContext1 
 }
 
 static void STDMETHODCALLTYPE ClearUnorderedAccessViewFloat(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const FLOAT Values[ 4 ])
+		SAL__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		SAL__in  const FLOAT Values[ 4 ])
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1016,14 +832,10 @@ static void STDMETHODCALLTYPE ClearUnorderedAccessViewFloat(ID3D11DeviceContext1
 }
 
 static void STDMETHODCALLTYPE ClearDepthStencilView(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in  UINT ClearFlags,
-		/* [annotation] */
-		__in  FLOAT Depth,
-		/* [annotation] */
-		__in  UINT8 Stencil)
+		SAL__in  ID3D11DepthStencilView *pDepthStencilView,
+		SAL__in const UINT ClearFlags,
+		SAL__in const FLOAT Depth,
+		SAL__in const UINT8 Stencil)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1036,8 +848,7 @@ static void STDMETHODCALLTYPE ClearDepthStencilView(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GenerateMips(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11ShaderResourceView *pShaderResourceView)
+		SAL__in  ID3D11ShaderResourceView *pShaderResourceView)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1050,9 +861,8 @@ static void STDMETHODCALLTYPE GenerateMips(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE SetResourceMinLOD(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		FLOAT MinLOD)
+		SAL__in  ID3D11Resource *pResource,
+		const FLOAT MinLOD)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1065,8 +875,7 @@ static void STDMETHODCALLTYPE SetResourceMinLOD(ID3D11DeviceContext1 *This,
 }
 
 static FLOAT STDMETHODCALLTYPE GetResourceMinLOD(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource)
+		SAL__in  ID3D11Resource *pResource)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1079,16 +888,11 @@ static FLOAT STDMETHODCALLTYPE GetResourceMinLOD(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE ResolveSubresource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
-		__in  DXGI_FORMAT Format)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in  ID3D11Resource *pSrcResource,
+		SAL__in const UINT SrcSubresource,
+		SAL__in const DXGI_FORMAT Format)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1101,9 +905,8 @@ static void STDMETHODCALLTYPE ResolveSubresource(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE ExecuteCommandList(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11CommandList *pCommandList,
-		BOOL RestoreContextState)
+		SAL__in  ID3D11CommandList *pCommandList,
+		const BOOL RestoreContextState)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1116,12 +919,9 @@ static void STDMETHODCALLTYPE ExecuteCommandList(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1134,11 +934,9 @@ static void STDMETHODCALLTYPE HSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11HullShader *pHullShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11HullShader *pHullShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1151,12 +949,9 @@ static void STDMETHODCALLTYPE HSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1169,12 +964,9 @@ static void STDMETHODCALLTYPE HSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1187,12 +979,9 @@ static void STDMETHODCALLTYPE HSSetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1205,11 +994,9 @@ static void STDMETHODCALLTYPE DSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11DomainShader *pDomainShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11DomainShader *pDomainShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1222,12 +1009,9 @@ static void STDMETHODCALLTYPE DSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1240,12 +1024,9 @@ static void STDMETHODCALLTYPE DSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1258,12 +1039,9 @@ static void STDMETHODCALLTYPE DSSetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1276,14 +1054,10 @@ static void STDMETHODCALLTYPE CSSetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSSetUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__in_ecount(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
-		__in_ecount(NumUAVs)  const UINT *pUAVInitialCounts)
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot ) const UINT NumUAVs,
+		SAL__in_ecount(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
+		SAL__in_ecount(NumUAVs)  const UINT *pUAVInitialCounts)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1296,11 +1070,9 @@ static void STDMETHODCALLTYPE CSSetUnorderedAccessViews(ID3D11DeviceContext1 *Th
 }
 
 static void STDMETHODCALLTYPE CSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11ComputeShader *pComputeShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11ComputeShader *pComputeShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1313,12 +1085,9 @@ static void STDMETHODCALLTYPE CSSetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1331,12 +1100,9 @@ static void STDMETHODCALLTYPE CSSetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1349,12 +1115,9 @@ static void STDMETHODCALLTYPE CSSetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1367,12 +1130,9 @@ static void STDMETHODCALLTYPE VSGetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1385,12 +1145,9 @@ static void STDMETHODCALLTYPE PSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11PixelShader **ppPixelShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11PixelShader **ppPixelShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1403,12 +1160,9 @@ static void STDMETHODCALLTYPE PSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1421,12 +1175,9 @@ static void STDMETHODCALLTYPE PSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11VertexShader **ppVertexShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11VertexShader **ppVertexShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1439,12 +1190,9 @@ static void STDMETHODCALLTYPE VSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE PSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1457,8 +1205,7 @@ static void STDMETHODCALLTYPE PSGetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IAGetInputLayout(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11InputLayout **ppInputLayout)
+		SAL__out  ID3D11InputLayout **ppInputLayout)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1471,16 +1218,11 @@ static void STDMETHODCALLTYPE IAGetInputLayout(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IAGetVertexBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pStrides,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pOffsets)
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pStrides,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pOffsets)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1493,12 +1235,9 @@ static void STDMETHODCALLTYPE IAGetVertexBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IAGetIndexBuffer(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11Buffer **pIndexBuffer,
-		/* [annotation] */
-		__out_opt  DXGI_FORMAT *Format,
-		/* [annotation] */
-		__out_opt  UINT *Offset)
+		SAL__out_opt  ID3D11Buffer **pIndexBuffer,
+		SAL__out_opt  DXGI_FORMAT *Format,
+		SAL__out_opt  UINT *Offset)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1511,12 +1250,9 @@ static void STDMETHODCALLTYPE IAGetIndexBuffer(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1529,12 +1265,9 @@ static void STDMETHODCALLTYPE GSGetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11GeometryShader **ppGeometryShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11GeometryShader **ppGeometryShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1547,8 +1280,7 @@ static void STDMETHODCALLTYPE GSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE IAGetPrimitiveTopology(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
+		SAL__out  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1561,12 +1293,9 @@ static void STDMETHODCALLTYPE IAGetPrimitiveTopology(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1579,12 +1308,9 @@ static void STDMETHODCALLTYPE VSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE VSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1597,10 +1323,8 @@ static void STDMETHODCALLTYPE VSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GetPredication(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11Predicate **ppPredicate,
-		/* [annotation] */
-		__out_opt  BOOL *pPredicateValue)
+		SAL__out_opt  ID3D11Predicate **ppPredicate,
+		SAL__out_opt  BOOL *pPredicateValue)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1613,12 +1337,9 @@ static void STDMETHODCALLTYPE GetPredication(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1631,12 +1352,9 @@ static void STDMETHODCALLTYPE GSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE GSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1649,12 +1367,9 @@ static void STDMETHODCALLTYPE GSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE OMGetRenderTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilView **ppDepthStencilView)
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumViews,
+		SAL__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
+		SAL__out_opt  ID3D11DepthStencilView **ppDepthStencilView)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1667,18 +1382,12 @@ static void STDMETHODCALLTYPE OMGetRenderTargets(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE OMGetRenderTargetsAndUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumRTVs,
-		/* [annotation] */
-		__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilView **ppDepthStencilView,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT UAVStartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumRTVs,
+		SAL__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
+		SAL__out_opt  ID3D11DepthStencilView **ppDepthStencilView,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT UAVStartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot ) const UINT NumUAVs,
+		SAL__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1691,12 +1400,9 @@ static void STDMETHODCALLTYPE OMGetRenderTargetsAndUnorderedAccessViews(ID3D11De
 }
 
 static void STDMETHODCALLTYPE OMGetBlendState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11BlendState **ppBlendState,
-		/* [annotation] */
-		__out_opt  FLOAT BlendFactor[ 4 ],
-		/* [annotation] */
-		__out_opt  UINT *pSampleMask)
+		SAL__out_opt  ID3D11BlendState **ppBlendState,
+		SAL__out_opt  FLOAT BlendFactor[ 4 ],
+		SAL__out_opt  UINT *pSampleMask)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1709,10 +1415,8 @@ static void STDMETHODCALLTYPE OMGetBlendState(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE OMGetDepthStencilState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilState **ppDepthStencilState,
-		/* [annotation] */
-		__out_opt  UINT *pStencilRef)
+		SAL__out_opt  ID3D11DepthStencilState **ppDepthStencilState,
+		SAL__out_opt  UINT *pStencilRef)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1725,10 +1429,8 @@ static void STDMETHODCALLTYPE OMGetDepthStencilState(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE SOGetTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SO_BUFFER_SLOT_COUNT )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppSOTargets)
+		_In_range_( 0, D3D11_SO_BUFFER_SLOT_COUNT ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppSOTargets)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1741,8 +1443,7 @@ static void STDMETHODCALLTYPE SOGetTargets(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSGetState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11RasterizerState **ppRasterizerState)
+		SAL__out  ID3D11RasterizerState **ppRasterizerState)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1755,10 +1456,8 @@ static void STDMETHODCALLTYPE RSGetState(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSGetViewports(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumViewports,
-		/* [annotation] */
-		__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
+		SAL__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumViewports,
+		SAL__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1771,10 +1470,8 @@ static void STDMETHODCALLTYPE RSGetViewports(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE RSGetScissorRects(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumRects,
-		/* [annotation] */
-		__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
+		SAL__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumRects,
+		SAL__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1787,12 +1484,9 @@ static void STDMETHODCALLTYPE RSGetScissorRects(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1805,12 +1499,9 @@ static void STDMETHODCALLTYPE HSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11HullShader **ppHullShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11HullShader **ppHullShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1823,12 +1514,9 @@ static void STDMETHODCALLTYPE HSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1841,12 +1529,9 @@ static void STDMETHODCALLTYPE HSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE HSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1859,12 +1544,9 @@ static void STDMETHODCALLTYPE HSGetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1877,12 +1559,9 @@ static void STDMETHODCALLTYPE DSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11DomainShader **ppDomainShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11DomainShader **ppDomainShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1895,12 +1574,9 @@ static void STDMETHODCALLTYPE DSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1913,12 +1589,9 @@ static void STDMETHODCALLTYPE DSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE DSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1931,12 +1604,9 @@ static void STDMETHODCALLTYPE DSGetConstantBuffers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1949,12 +1619,9 @@ static void STDMETHODCALLTYPE CSGetShaderResources(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSGetUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__out_ecount(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot ) const UINT NumUAVs,
+		SAL__out_ecount(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1967,12 +1634,9 @@ static void STDMETHODCALLTYPE CSGetUnorderedAccessViews(ID3D11DeviceContext1 *Th
 }
 
 static void STDMETHODCALLTYPE CSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11ComputeShader **ppComputeShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11ComputeShader **ppComputeShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -1985,12 +1649,9 @@ static void STDMETHODCALLTYPE CSGetShader(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -2003,12 +1664,9 @@ static void STDMETHODCALLTYPE CSGetSamplers(ID3D11DeviceContext1 *This,
 }
 
 static void STDMETHODCALLTYPE CSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -2069,9 +1727,8 @@ static UINT STDMETHODCALLTYPE GetContextFlags(ID3D11DeviceContext1 *This)
 }
 
 static HRESULT STDMETHODCALLTYPE FinishCommandList(ID3D11DeviceContext1 *This,
-		BOOL RestoreDeferredContextState,
-		/* [annotation] */
-		__out_opt  ID3D11CommandList **ppCommandList)
+		const BOOL RestoreDeferredContextState,
+		SAL__out_opt  ID3D11CommandList **ppCommandList)
 {
 	ID3D11DeviceContext1 *context = lookup_hooked_context(This);
 
@@ -2083,8 +1740,7 @@ static HRESULT STDMETHODCALLTYPE FinishCommandList(ID3D11DeviceContext1 *This,
 	return orig_vtable.FinishCommandList(This, RestoreDeferredContextState, ppCommandList);
 }
 
-static void install_hooks(ID3D11DeviceContext1 *context)
-{
+static void install_hooks(const ID3D11DeviceContext1 *context) {
 	SIZE_T hook_id;
 
 	// Hooks should only be installed once as they will affect all contexts
@@ -2093,12 +1749,11 @@ static void install_hooks(ID3D11DeviceContext1 *context)
 	InitializeCriticalSectionPretty(&context_map_lock);
 	hooks_installed = true;
 
-	// Make sure that everything in the orig_vtable is filled in just in
-	// case we miss one of the hooks below:
-	memcpy(&orig_vtable, context->lpVtbl, sizeof(struct ID3D11DeviceContext1Vtbl));
+	// Make sure that everything in the orig_vtable is filled in just in case we miss one of the hooks below:
+	memcpy(&orig_vtable, context->lpVtbl, sizeof(ID3D11DeviceContext1Vtbl));
 
 	// At the moment we are just throwing away the hook IDs - we should
-	// probably hold on to them incase we need to remove the hooks later:
+	// probably hold on to them in case we need to remove the hooks later:
 	cHookMgr.Hook(&hook_id, (void**)&orig_vtable.QueryInterface,                            context->lpVtbl->QueryInterface,                            QueryInterface);
 	cHookMgr.Hook(&hook_id, (void**)&orig_vtable.AddRef,                                    context->lpVtbl->AddRef,                                    AddRef);
 	cHookMgr.Hook(&hook_id, (void**)&orig_vtable.Release,                                   context->lpVtbl->Release,                                   Release);
@@ -2223,7 +1878,7 @@ static void install_hooks(ID3D11DeviceContext1 *context)
 // and elsewhere and gives us a way to call back into the game with minimal
 // code changes.
 typedef struct ID3D11DeviceContext1Trampoline {
-	CONST_VTBL struct ID3D11DeviceContext1Vtbl *lpVtbl;
+	CONST_VTBL ID3D11DeviceContext1Vtbl *lpVtbl;
 	ID3D11DeviceContext1 *orig_this;
 } ID3D11DeviceContext1Trampoline;
 
@@ -2241,10 +1896,8 @@ static ULONG STDMETHODCALLTYPE TrampolineAddRef(ID3D11DeviceContext1 *This)
 }
 static ULONG STDMETHODCALLTYPE TrampolineRelease(ID3D11DeviceContext1 *This)
 {
-	ULONG ref;
-
 	HookDebug("TrampolineContext::Release()\n");
-	ref = orig_vtable.Release(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
+	const ULONG ref = orig_vtable.Release(((ID3D11DeviceContext1Trampoline *) This)->orig_this);
 
 	if (!ref)
 		delete This;
@@ -2253,378 +1906,279 @@ static ULONG STDMETHODCALLTYPE TrampolineRelease(ID3D11DeviceContext1 *This)
 }
 // ID3D11DeviceChild
 static void STDMETHODCALLTYPE TrampolineGetDevice(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11Device **ppDevice)
+		SAL__out  ID3D11Device **ppDevice)
 {
 	HookDebug("TrampolineContext::GetDevice()\n");
 	return orig_vtable.GetDevice(((ID3D11DeviceContext1Trampoline*)This)->orig_this, ppDevice);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineGetPrivateData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__inout  UINT *pDataSize,
-		/* [annotation] */
-		__out_bcount_opt( *pDataSize )  void *pData)
+		SAL__in  REFGUID guid,
+		SAL__inout  UINT *pDataSize,
+		SAL__out_bcount_opt( *pDataSize )  void *pData)
 {
 	HookDebug("TrampolineContext::GetPrivateData()\n");
 	return orig_vtable.GetPrivateData(((ID3D11DeviceContext1Trampoline*)This)->orig_this, guid, pDataSize, pData);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineSetPrivateData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in_bcount_opt( DataSize )  const void *pData)
+		SAL__in  REFGUID guid,
+		SAL__in const UINT DataSize,
+		SAL__in_bcount_opt( DataSize )  const void *pData)
 {
 	HookDebug("TrampolineContext::SetPrivateData()\n");
 	return orig_vtable.SetPrivateData(((ID3D11DeviceContext1Trampoline*)This)->orig_this, guid, DataSize, pData);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineSetPrivateDataInterface(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  REFGUID guid,
-		/* [annotation] */
-		__in_opt  const IUnknown *pData)
+		SAL__in  REFGUID guid,
+		SAL__in_opt  const IUnknown *pData)
 {
 	HookDebug("TrampolineContext::SetPrivateDataInterface()\n");
 	return orig_vtable.SetPrivateDataInterface(((ID3D11DeviceContext1Trampoline*)This)->orig_this, guid, pData);
 }
 // ID3D11DeviceContext1
 static void STDMETHODCALLTYPE TrampolineVSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::VSSetConstantBuffers()\n");
 	return orig_vtable.VSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolinePSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::PSSetShaderResources()\n");
 	return orig_vtable.PSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolinePSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11PixelShader *pPixelShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11PixelShader *pPixelShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::PSSetShader()\n");
 	return orig_vtable.PSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pPixelShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolinePSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::PSSetSamplers()\n");
 	return orig_vtable.PSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineVSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11VertexShader *pVertexShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11VertexShader *pVertexShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::VSSetShader()\n");
 	return orig_vtable.VSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pVertexShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineDrawIndexed(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT IndexCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation)
+		SAL__in const UINT IndexCount,
+		SAL__in const UINT StartIndexLocation,
+		SAL__in const INT BaseVertexLocation)
 {
 	HookDebug("TrampolineContext::DrawIndexed()\n");
 	return orig_vtable.DrawIndexed(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  IndexCount, StartIndexLocation, BaseVertexLocation);
 }
 static void STDMETHODCALLTYPE TrampolineDraw(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT VertexCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation)
+		SAL__in const UINT VertexCount,
+		SAL__in const UINT StartVertexLocation)
 {
 	HookDebug("TrampolineContext::Draw()\n");
 	return orig_vtable.Draw(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  VertexCount, StartVertexLocation);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineMap(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource,
-		/* [annotation] */
-		__in  D3D11_MAP MapType,
-		/* [annotation] */
-		__in  UINT MapFlags,
-		/* [annotation] */
-		__out  D3D11_MAPPED_SUBRESOURCE *pMappedResource)
+		SAL__in  ID3D11Resource *pResource,
+		SAL__in const UINT Subresource,
+		SAL__in const D3D11_MAP MapType,
+		SAL__in const UINT MapFlags,
+		SAL__out  D3D11_MAPPED_SUBRESOURCE *pMappedResource)
 {
 	HookDebug("TrampolineContext::Map()\n");
 	return orig_vtable.Map(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pResource, Subresource, MapType, MapFlags, pMappedResource);
 }
 static void STDMETHODCALLTYPE TrampolineUnmap(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		/* [annotation] */
-		__in  UINT Subresource)
+		SAL__in  ID3D11Resource *pResource,
+		SAL__in const UINT Subresource)
 {
 	HookDebug("TrampolineContext::Unmap()\n");
 	return orig_vtable.Unmap(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pResource, Subresource);
 }
 static void STDMETHODCALLTYPE TrampolinePSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::PSSetConstantBuffers()\n");
 	return orig_vtable.PSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineIASetInputLayout(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11InputLayout *pInputLayout)
+		SAL__in_opt  ID3D11InputLayout *pInputLayout)
 {
 	HookDebug("TrampolineContext::IASetInputLayout()\n");
 	return orig_vtable.IASetInputLayout(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pInputLayout);
 }
 static void STDMETHODCALLTYPE TrampolineIASetVertexBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppVertexBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  const UINT *pStrides,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  const UINT *pOffsets)
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppVertexBuffers,
+		SAL__in_ecount(NumBuffers)  const UINT *pStrides,
+		SAL__in_ecount(NumBuffers)  const UINT *pOffsets)
 {
 	HookDebug("TrampolineContext::IASetVertexBuffers()\n");
 	return orig_vtable.IASetVertexBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets);
 }
 static void STDMETHODCALLTYPE TrampolineIASetIndexBuffer(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11Buffer *pIndexBuffer,
-		/* [annotation] */
-		__in  DXGI_FORMAT Format,
-		/* [annotation] */
-		__in  UINT Offset)
+		SAL__in_opt  ID3D11Buffer *pIndexBuffer,
+		SAL__in const DXGI_FORMAT Format,
+		SAL__in const UINT Offset)
 {
 	HookDebug("TrampolineContext::IASetIndexBuffer()\n");
 	return orig_vtable.IASetIndexBuffer(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pIndexBuffer, Format, Offset);
 }
 static void STDMETHODCALLTYPE TrampolineDrawIndexedInstanced(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT IndexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartIndexLocation,
-		/* [annotation] */
-		__in  INT BaseVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
+		SAL__in const UINT IndexCountPerInstance,
+		SAL__in const UINT InstanceCount,
+		SAL__in const UINT StartIndexLocation,
+		SAL__in const INT BaseVertexLocation,
+		SAL__in const UINT StartInstanceLocation)
 {
 	HookDebug("TrampolineContext::DrawIndexedInstanced()\n");
 	return orig_vtable.DrawIndexedInstanced(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 }
 static void STDMETHODCALLTYPE TrampolineDrawInstanced(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT VertexCountPerInstance,
-		/* [annotation] */
-		__in  UINT InstanceCount,
-		/* [annotation] */
-		__in  UINT StartVertexLocation,
-		/* [annotation] */
-		__in  UINT StartInstanceLocation)
+		SAL__in const UINT VertexCountPerInstance,
+		SAL__in const UINT InstanceCount,
+		SAL__in const UINT StartVertexLocation,
+		SAL__in const UINT StartInstanceLocation)
 {
 	HookDebug("TrampolineContext::DrawInstanced()\n");
 	return orig_vtable.DrawInstanced(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 }
 static void STDMETHODCALLTYPE TrampolineGSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::GSSetConstantBuffers()\n");
 	return orig_vtable.GSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineGSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11GeometryShader *pShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11GeometryShader *pShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::GSSetShader()\n");
 	return orig_vtable.GSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineIASetPrimitiveTopology(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  D3D11_PRIMITIVE_TOPOLOGY Topology)
+		SAL__in const D3D11_PRIMITIVE_TOPOLOGY Topology)
 {
 	HookDebug("TrampolineContext::IASetPrimitiveTopology()\n");
 	return orig_vtable.IASetPrimitiveTopology(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  Topology);
 }
 static void STDMETHODCALLTYPE TrampolineVSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::VSSetShaderResources()\n");
 	return orig_vtable.VSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineVSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::VSSetSamplers()\n");
 	return orig_vtable.VSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineBegin(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		SAL__in  ID3D11Asynchronous *pAsync)
 {
 	HookDebug("TrampolineContext::Begin()\n");
 	return orig_vtable.Begin(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pAsync);
 }
 static void STDMETHODCALLTYPE TrampolineEnd(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync)
+		SAL__in  ID3D11Asynchronous *pAsync)
 {
 	HookDebug("TrampolineContext::End()\n");
 	return orig_vtable.End(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pAsync);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineGetData(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Asynchronous *pAsync,
-		/* [annotation] */
-		__out_bcount_opt( DataSize )  void *pData,
-		/* [annotation] */
-		__in  UINT DataSize,
-		/* [annotation] */
-		__in  UINT GetDataFlags)
+		SAL__in  ID3D11Asynchronous *pAsync,
+		SAL__out_bcount_opt( DataSize )  void *pData,
+		SAL__in const UINT DataSize,
+		SAL__in const UINT GetDataFlags)
 {
 	HookDebug("TrampolineContext::GetData()\n");
 	return orig_vtable.GetData(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pAsync, pData, DataSize, GetDataFlags);
 }
 static void STDMETHODCALLTYPE TrampolineSetPredication(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11Predicate *pPredicate,
-		/* [annotation] */
-		__in  BOOL PredicateValue)
+		SAL__in_opt  ID3D11Predicate *pPredicate,
+		SAL__in const BOOL PredicateValue)
 {
 	HookDebug("TrampolineContext::SetPredication()\n");
 	return orig_vtable.SetPredication(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pPredicate, PredicateValue);
 }
 static void STDMETHODCALLTYPE TrampolineGSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::GSSetShaderResources()\n");
 	return orig_vtable.GSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineGSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::GSSetSamplers()\n");
 	return orig_vtable.GSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineOMSetRenderTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount_opt(NumViews)  ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilView *pDepthStencilView)
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumViews,
+		SAL__in_ecount_opt(NumViews)  ID3D11RenderTargetView *const *ppRenderTargetViews,
+		SAL__in_opt  ID3D11DepthStencilView *pDepthStencilView)
 {
 	HookDebug("TrampolineContext::OMSetRenderTargets()\n");
 	return orig_vtable.OMSetRenderTargets(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumViews, ppRenderTargetViews, pDepthStencilView);
 }
 static void STDMETHODCALLTYPE TrampolineOMSetRenderTargetsAndUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT NumRTVs,
-		/* [annotation] */
-		__in_ecount_opt(NumRTVs)  ID3D11RenderTargetView *const *ppRenderTargetViews,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT UAVStartSlot,
-		/* [annotation] */
-		__in  UINT NumUAVs,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
-		__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts)
+		SAL__in const UINT NumRTVs,
+		SAL__in_ecount_opt(NumRTVs)  ID3D11RenderTargetView *const *ppRenderTargetViews,
+		SAL__in_opt  ID3D11DepthStencilView *pDepthStencilView,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT UAVStartSlot,
+		SAL__in const UINT NumUAVs,
+		SAL__in_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
+		SAL__in_ecount_opt(NumUAVs)  const UINT *pUAVInitialCounts)
 {
 	HookDebug("TrampolineContext::OMSetRenderTargetsAndUnorderedAccessViews()\n");
 	return orig_vtable.OMSetRenderTargetsAndUnorderedAccessViews(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumRTVs, ppRenderTargetViews, pDepthStencilView, UAVStartSlot, NumUAVs, ppUnorderedAccessViews, pUAVInitialCounts);
 }
 static void STDMETHODCALLTYPE TrampolineOMSetBlendState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11BlendState *pBlendState,
-		/* [annotation] */
-		__in_opt  const FLOAT BlendFactor[ 4 ],
-		/* [annotation] */
-		__in  UINT SampleMask)
+		SAL__in_opt  ID3D11BlendState *pBlendState,
+		SAL__in_opt  const FLOAT BlendFactor[ 4 ],
+		SAL__in const UINT SampleMask)
 {
 	HookDebug("TrampolineContext::OMSetBlendState()\n");
 	return orig_vtable.OMSetBlendState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pBlendState, BlendFactor, SampleMask);
 }
 static void STDMETHODCALLTYPE TrampolineOMSetDepthStencilState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11DepthStencilState *pDepthStencilState,
-		/* [annotation] */
-		__in  UINT StencilRef)
+		SAL__in_opt  ID3D11DepthStencilState *pDepthStencilState,
+		SAL__in const UINT StencilRef)
 {
 	HookDebug("TrampolineContext::OMSetDepthStencilState()\n");
 	return orig_vtable.OMSetDepthStencilState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDepthStencilState, StencilRef);
 }
 static void STDMETHODCALLTYPE TrampolineSOSetTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SO_BUFFER_SLOT_COUNT)  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
-		/* [annotation] */
-		__in_ecount_opt(NumBuffers)  const UINT *pOffsets)
+		_In_range_( 0, D3D11_SO_BUFFER_SLOT_COUNT) const UINT NumBuffers,
+		SAL__in_ecount_opt(NumBuffers)  ID3D11Buffer *const *ppSOTargets,
+		SAL__in_ecount_opt(NumBuffers)  const UINT *pOffsets)
 {
 	HookDebug("TrampolineContext::SOSetTargets()\n");
 	return orig_vtable.SOSetTargets(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumBuffers, ppSOTargets, pOffsets);
@@ -2635,789 +2189,580 @@ static void STDMETHODCALLTYPE TrampolineDrawAuto(ID3D11DeviceContext1 *This)
 	return orig_vtable.DrawAuto(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
 }
 static void STDMETHODCALLTYPE TrampolineDrawIndexedInstancedIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs)
 {
 	HookDebug("TrampolineContext::DrawIndexedInstancedIndirect()\n");
 	return orig_vtable.DrawIndexedInstancedIndirect(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pBufferForArgs, AlignedByteOffsetForArgs);
 }
 static void STDMETHODCALLTYPE TrampolineDrawInstancedIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs)
 {
 	HookDebug("TrampolineContext::DrawInstancedIndirect()\n");
 	return orig_vtable.DrawInstancedIndirect(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pBufferForArgs, AlignedByteOffsetForArgs);
 }
 static void STDMETHODCALLTYPE TrampolineDispatch(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountX,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountY,
-		/* [annotation] */
-		__in  UINT ThreadGroupCountZ)
+		SAL__in const UINT ThreadGroupCountX,
+		SAL__in const UINT ThreadGroupCountY,
+		SAL__in const UINT ThreadGroupCountZ)
 {
 	HookDebug("TrampolineContext::Dispatch()\n");
 	return orig_vtable.Dispatch(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ThreadGroupCountX, ThreadGroupCountY, ThreadGroupCountZ);
 }
 static void STDMETHODCALLTYPE TrampolineDispatchIndirect(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pBufferForArgs,
-		/* [annotation] */
-		__in  UINT AlignedByteOffsetForArgs)
+		SAL__in  ID3D11Buffer *pBufferForArgs,
+		SAL__in const UINT AlignedByteOffsetForArgs)
 {
 	HookDebug("TrampolineContext::DispatchIndirect()\n");
 	return orig_vtable.DispatchIndirect(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pBufferForArgs, AlignedByteOffsetForArgs);
 }
 static void STDMETHODCALLTYPE TrampolineRSSetState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11RasterizerState *pRasterizerState)
+		SAL__in_opt  ID3D11RasterizerState *pRasterizerState)
 {
 	HookDebug("TrampolineContext::RSSetState()\n");
 	return orig_vtable.RSSetState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pRasterizerState);
 }
 static void STDMETHODCALLTYPE TrampolineRSSetViewports(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumViewports,
-		/* [annotation] */
-		__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) const UINT NumViewports,
+		SAL__in_ecount_opt(NumViewports)  const D3D11_VIEWPORT *pViewports)
 {
 	HookDebug("TrampolineContext::RSSetViewports()\n");
 	return orig_vtable.RSSetViewports(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumViewports, pViewports);
 }
 static void STDMETHODCALLTYPE TrampolineRSSetScissorRects(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE)  UINT NumRects,
-		/* [annotation] */
-		__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
+		_In_range_(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE) const UINT NumRects,
+		SAL__in_ecount_opt(NumRects)  const D3D11_RECT *pRects)
 {
 	HookDebug("TrampolineContext::RSSetScissorRects()\n");
 	return orig_vtable.RSSetScissorRects(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumRects, pRects);
 }
 static void STDMETHODCALLTYPE TrampolineCopySubresourceRegion(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  UINT DstX,
-		/* [annotation] */
-		__in  UINT DstY,
-		/* [annotation] */
-		__in  UINT DstZ,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
-		__in_opt  const D3D11_BOX *pSrcBox)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in const UINT DstX,
+		SAL__in const UINT DstY,
+		SAL__in const UINT DstZ,
+		SAL__in  ID3D11Resource *pSrcResource,
+		SAL__in const UINT SrcSubresource,
+		SAL__in_opt  const D3D11_BOX *pSrcBox)
 {
 	HookDebug("TrampolineContext::CopySubresourceRegion()\n");
 	return orig_vtable.CopySubresourceRegion(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDstResource, DstSubresource, DstX, DstY, DstZ, pSrcResource, SrcSubresource, pSrcBox);
 }
 static void STDMETHODCALLTYPE TrampolineCopyResource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in  ID3D11Resource *pSrcResource)
 {
 	HookDebug("TrampolineContext::CopyResource()\n");
 	return orig_vtable.CopyResource(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDstResource, pSrcResource);
 }
 static void STDMETHODCALLTYPE TrampolineUpdateSubresource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in_opt  const D3D11_BOX *pDstBox,
-		/* [annotation] */
-		__in  const void *pSrcData,
-		/* [annotation] */
-		__in  UINT SrcRowPitch,
-		/* [annotation] */
-		__in  UINT SrcDepthPitch)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in_opt  const D3D11_BOX *pDstBox,
+		SAL__in  const void *pSrcData,
+		SAL__in const UINT SrcRowPitch,
+		SAL__in const UINT SrcDepthPitch)
 {
 	HookDebug("TrampolineContext::UpdateSubresource()\n");
 	return orig_vtable.UpdateSubresource(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDstResource, DstSubresource, pDstBox, pSrcData, SrcRowPitch, SrcDepthPitch);
 }
 static void STDMETHODCALLTYPE TrampolineCopyStructureCount(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Buffer *pDstBuffer,
-		/* [annotation] */
-		__in  UINT DstAlignedByteOffset,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pSrcView)
+		SAL__in  ID3D11Buffer *pDstBuffer,
+		SAL__in const UINT DstAlignedByteOffset,
+		SAL__in  ID3D11UnorderedAccessView *pSrcView)
 {
 	HookDebug("TrampolineContext::CopyStructureCount()\n");
 	return orig_vtable.CopyStructureCount(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDstBuffer, DstAlignedByteOffset, pSrcView);
 }
 static void STDMETHODCALLTYPE TrampolineClearRenderTargetView(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11RenderTargetView *pRenderTargetView,
-		/* [annotation] */
-		__in  const FLOAT ColorRGBA[ 4 ])
+		SAL__in  ID3D11RenderTargetView *pRenderTargetView,
+		SAL__in  const FLOAT ColorRGBA[ 4 ])
 {
 	HookDebug("TrampolineContext::ClearRenderTargetView()\n");
 	return orig_vtable.ClearRenderTargetView(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pRenderTargetView, ColorRGBA);
 }
 static void STDMETHODCALLTYPE TrampolineClearUnorderedAccessViewUint(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const UINT Values[ 4 ])
+		SAL__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		SAL__in  const UINT Values[ 4 ])
 {
 	HookDebug("TrampolineContext::ClearUnorderedAccessViewUint()\n");
 	return orig_vtable.ClearUnorderedAccessViewUint(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pUnorderedAccessView, Values);
 }
 static void STDMETHODCALLTYPE TrampolineClearUnorderedAccessViewFloat(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
-		/* [annotation] */
-		__in  const FLOAT Values[ 4 ])
+		SAL__in  ID3D11UnorderedAccessView *pUnorderedAccessView,
+		SAL__in  const FLOAT Values[ 4 ])
 {
 	HookDebug("TrampolineContext::ClearUnorderedAccessViewFloat()\n");
 	return orig_vtable.ClearUnorderedAccessViewFloat(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pUnorderedAccessView, Values);
 }
 static void STDMETHODCALLTYPE TrampolineClearDepthStencilView(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11DepthStencilView *pDepthStencilView,
-		/* [annotation] */
-		__in  UINT ClearFlags,
-		/* [annotation] */
-		__in  FLOAT Depth,
-		/* [annotation] */
-		__in  UINT8 Stencil)
+		SAL__in  ID3D11DepthStencilView *pDepthStencilView,
+		SAL__in const UINT ClearFlags,
+		SAL__in const FLOAT Depth,
+		SAL__in const UINT8 Stencil)
 {
 	HookDebug("TrampolineContext::ClearDepthStencilView()\n");
 	return orig_vtable.ClearDepthStencilView(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDepthStencilView, ClearFlags, Depth, Stencil);
 }
 static void STDMETHODCALLTYPE TrampolineGenerateMips(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11ShaderResourceView *pShaderResourceView)
+		SAL__in  ID3D11ShaderResourceView *pShaderResourceView)
 {
 	HookDebug("TrampolineContext::GenerateMips()\n");
 	return orig_vtable.GenerateMips(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pShaderResourceView);
 }
 static void STDMETHODCALLTYPE TrampolineSetResourceMinLOD(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource,
-		FLOAT MinLOD)
+		SAL__in  ID3D11Resource *pResource,
+		const FLOAT MinLOD)
 {
 	HookDebug("TrampolineContext::SetResourceMinLOD()\n");
 	return orig_vtable.SetResourceMinLOD(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pResource, MinLOD);
 }
 static FLOAT STDMETHODCALLTYPE TrampolineGetResourceMinLOD(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pResource)
+		SAL__in  ID3D11Resource *pResource)
 {
 	HookDebug("TrampolineContext::GetResourceMinLOD()\n");
 	return orig_vtable.GetResourceMinLOD(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pResource);
 }
 static void STDMETHODCALLTYPE TrampolineResolveSubresource(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11Resource *pDstResource,
-		/* [annotation] */
-		__in  UINT DstSubresource,
-		/* [annotation] */
-		__in  ID3D11Resource *pSrcResource,
-		/* [annotation] */
-		__in  UINT SrcSubresource,
-		/* [annotation] */
-		__in  DXGI_FORMAT Format)
+		SAL__in  ID3D11Resource *pDstResource,
+		SAL__in const UINT DstSubresource,
+		SAL__in  ID3D11Resource *pSrcResource,
+		SAL__in const UINT SrcSubresource,
+		SAL__in const DXGI_FORMAT Format)
 {
 	HookDebug("TrampolineContext::ResolveSubresource()\n");
 	return orig_vtable.ResolveSubresource(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDstResource, DstSubresource, pSrcResource, SrcSubresource, Format);
 }
 static void STDMETHODCALLTYPE TrampolineExecuteCommandList(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in  ID3D11CommandList *pCommandList,
-		BOOL RestoreContextState)
+		SAL__in  ID3D11CommandList *pCommandList,
+		const BOOL RestoreContextState)
 {
 	HookDebug("TrampolineContext::ExecuteCommandList()\n");
 	return orig_vtable.ExecuteCommandList(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pCommandList, RestoreContextState);
 }
 static void STDMETHODCALLTYPE TrampolineHSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::HSSetShaderResources()\n");
 	return orig_vtable.HSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineHSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11HullShader *pHullShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11HullShader *pHullShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::HSSetShader()\n");
 	return orig_vtable.HSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pHullShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineHSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::HSSetSamplers()\n");
 	return orig_vtable.HSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineHSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::HSSetConstantBuffers()\n");
 	return orig_vtable.HSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineDSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::DSSetShaderResources()\n");
 	return orig_vtable.DSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineDSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11DomainShader *pDomainShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11DomainShader *pDomainShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::DSSetShader()\n");
 	return orig_vtable.DSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pDomainShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineDSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::DSSetSamplers()\n");
 	return orig_vtable.DSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineDSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::DSSetConstantBuffers()\n");
 	return orig_vtable.DSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineCSSetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__in_ecount(NumViews)  ID3D11ShaderResourceView *const *ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::CSSetShaderResources()\n");
 	return orig_vtable.CSSetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineCSSetUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__in_ecount(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
-		/* [annotation] */
-		__in_ecount(NumUAVs)  const UINT *pUAVInitialCounts)
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot ) const UINT NumUAVs,
+		SAL__in_ecount(NumUAVs)  ID3D11UnorderedAccessView *const *ppUnorderedAccessViews,
+		SAL__in_ecount(NumUAVs)  const UINT *pUAVInitialCounts)
 {
 	HookDebug("TrampolineContext::CSSetUnorderedAccessViews()\n");
 	return orig_vtable.CSSetUnorderedAccessViews(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumUAVs, ppUnorderedAccessViews, pUAVInitialCounts);
 }
 static void STDMETHODCALLTYPE TrampolineCSSetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_opt  ID3D11ComputeShader *pComputeShader,
-		/* [annotation] */
-		__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
-		UINT NumClassInstances)
+		SAL__in_opt  ID3D11ComputeShader *pComputeShader,
+		SAL__in_ecount_opt(NumClassInstances)  ID3D11ClassInstance *const *ppClassInstances,
+		const UINT NumClassInstances)
 {
 	HookDebug("TrampolineContext::CSSetShader()\n");
 	return orig_vtable.CSSetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pComputeShader, ppClassInstances, NumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineCSSetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__in_ecount(NumSamplers)  ID3D11SamplerState *const *ppSamplers)
 {
 	HookDebug("TrampolineContext::CSSetSamplers()\n");
 	return orig_vtable.CSSetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineCSSetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__in_ecount(NumBuffers)  ID3D11Buffer *const *ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::CSSetConstantBuffers()\n");
 	return orig_vtable.CSSetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineVSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::VSGetConstantBuffers()\n");
 	return orig_vtable.VSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolinePSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::PSGetShaderResources()\n");
 	return orig_vtable.PSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolinePSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11PixelShader **ppPixelShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11PixelShader **ppPixelShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	HookDebug("TrampolineContext::PSGetShader()\n");
 	return orig_vtable.PSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppPixelShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolinePSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HookDebug("TrampolineContext::PSGetSamplers()\n");
 	return orig_vtable.PSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineVSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11VertexShader **ppVertexShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11VertexShader **ppVertexShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	HookDebug("TrampolineContext::VSGetShader()\n");
 	return orig_vtable.VSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppVertexShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolinePSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::PSGetConstantBuffers()\n");
 	return orig_vtable.PSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineIAGetInputLayout(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11InputLayout **ppInputLayout)
+		SAL__out  ID3D11InputLayout **ppInputLayout)
 {
 	HookDebug("TrampolineContext::IAGetInputLayout()\n");
 	return orig_vtable.IAGetInputLayout(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppInputLayout);
 }
 static void STDMETHODCALLTYPE TrampolineIAGetVertexBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pStrides,
-		/* [annotation] */
-		__out_ecount_opt(NumBuffers)  UINT *pOffsets)
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount_opt(NumBuffers)  ID3D11Buffer **ppVertexBuffers,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pStrides,
+		SAL__out_ecount_opt(NumBuffers)  UINT *pOffsets)
 {
 	HookDebug("TrampolineContext::IAGetVertexBuffers()\n");
 	return orig_vtable.IAGetVertexBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppVertexBuffers, pStrides, pOffsets);
 }
 static void STDMETHODCALLTYPE TrampolineIAGetIndexBuffer(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11Buffer **pIndexBuffer,
-		/* [annotation] */
-		__out_opt  DXGI_FORMAT *Format,
-		/* [annotation] */
-		__out_opt  UINT *Offset)
+		SAL__out_opt  ID3D11Buffer **pIndexBuffer,
+		SAL__out_opt  DXGI_FORMAT *Format,
+		SAL__out_opt  UINT *Offset)
 {
 	HookDebug("TrampolineContext::IAGetIndexBuffer()\n");
 	return orig_vtable.IAGetIndexBuffer(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pIndexBuffer, Format, Offset);
 }
 static void STDMETHODCALLTYPE TrampolineGSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::GSGetConstantBuffers()\n");
 	return orig_vtable.GSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineGSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11GeometryShader **ppGeometryShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11GeometryShader **ppGeometryShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	HookDebug("TrampolineContext::GSGetShader()\n");
 	return orig_vtable.GSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppGeometryShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineIAGetPrimitiveTopology(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
+		SAL__out  D3D11_PRIMITIVE_TOPOLOGY *pTopology)
 {
 	HookDebug("TrampolineContext::IAGetPrimitiveTopology()\n");
 	return orig_vtable.IAGetPrimitiveTopology(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pTopology);
 }
 static void STDMETHODCALLTYPE TrampolineVSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::VSGetShaderResources()\n");
 	return orig_vtable.VSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineVSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HookDebug("TrampolineContext::VSGetSamplers()\n");
 	return orig_vtable.VSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineGetPredication(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11Predicate **ppPredicate,
-		/* [annotation] */
-		__out_opt  BOOL *pPredicateValue)
+		SAL__out_opt  ID3D11Predicate **ppPredicate,
+		SAL__out_opt  BOOL *pPredicateValue)
 {
 	HookDebug("TrampolineContext::GetPredication()\n");
 	return orig_vtable.GetPredication(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppPredicate, pPredicateValue);
 }
 static void STDMETHODCALLTYPE TrampolineGSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::GSGetShaderResources()\n");
 	return orig_vtable.GSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineGSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HookDebug("TrampolineContext::GSGetSamplers()\n");
 	return orig_vtable.GSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineOMGetRenderTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilView **ppDepthStencilView)
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumViews,
+		SAL__out_ecount_opt(NumViews)  ID3D11RenderTargetView **ppRenderTargetViews,
+		SAL__out_opt  ID3D11DepthStencilView **ppDepthStencilView)
 {
 	HookDebug("TrampolineContext::OMGetRenderTargets()\n");
 	return orig_vtable.OMGetRenderTargets(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumViews, ppRenderTargetViews, ppDepthStencilView);
 }
 static void STDMETHODCALLTYPE TrampolineOMGetRenderTargetsAndUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT )  UINT NumRTVs,
-		/* [annotation] */
-		__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilView **ppDepthStencilView,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT UAVStartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
+		_In_range_( 0, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT ) const UINT NumRTVs,
+		SAL__out_ecount_opt(NumRTVs)  ID3D11RenderTargetView **ppRenderTargetViews,
+		SAL__out_opt  ID3D11DepthStencilView **ppDepthStencilView,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT UAVStartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - UAVStartSlot ) const UINT NumUAVs,
+		SAL__out_ecount_opt(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
 {
 	HookDebug("TrampolineContext::OMGetRenderTargetsAndUnorderedAccessViews()\n");
 	return orig_vtable.OMGetRenderTargetsAndUnorderedAccessViews(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumRTVs, ppRenderTargetViews, ppDepthStencilView, UAVStartSlot, NumUAVs, ppUnorderedAccessViews);
 }
 static void STDMETHODCALLTYPE TrampolineOMGetBlendState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11BlendState **ppBlendState,
-		/* [annotation] */
-		__out_opt  FLOAT BlendFactor[ 4 ],
-		/* [annotation] */
-		__out_opt  UINT *pSampleMask)
+		SAL__out_opt  ID3D11BlendState **ppBlendState,
+		SAL__out_opt  FLOAT BlendFactor[ 4 ],
+		SAL__out_opt  UINT *pSampleMask)
 {
 	HookDebug("TrampolineContext::OMGetBlendState()\n");
 	return orig_vtable.OMGetBlendState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppBlendState, BlendFactor, pSampleMask);
 }
 static void STDMETHODCALLTYPE TrampolineOMGetDepthStencilState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out_opt  ID3D11DepthStencilState **ppDepthStencilState,
-		/* [annotation] */
-		__out_opt  UINT *pStencilRef)
+		SAL__out_opt  ID3D11DepthStencilState **ppDepthStencilState,
+		SAL__out_opt  UINT *pStencilRef)
 {
 	HookDebug("TrampolineContext::OMGetDepthStencilState()\n");
 	return orig_vtable.OMGetDepthStencilState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppDepthStencilState, pStencilRef);
 }
 static void STDMETHODCALLTYPE TrampolineSOGetTargets(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_SO_BUFFER_SLOT_COUNT )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppSOTargets)
+		_In_range_( 0, D3D11_SO_BUFFER_SLOT_COUNT ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppSOTargets)
 {
 	HookDebug("TrampolineContext::SOGetTargets()\n");
 	return orig_vtable.SOGetTargets(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  NumBuffers, ppSOTargets);
 }
 static void STDMETHODCALLTYPE TrampolineRSGetState(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11RasterizerState **ppRasterizerState)
+		SAL__out  ID3D11RasterizerState **ppRasterizerState)
 {
 	HookDebug("TrampolineContext::RSGetState()\n");
 	return orig_vtable.RSGetState(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppRasterizerState);
 }
 static void STDMETHODCALLTYPE TrampolineRSGetViewports(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumViewports,
-		/* [annotation] */
-		__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
+		SAL__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumViewports,
+		SAL__out_ecount_opt(*pNumViewports)  D3D11_VIEWPORT *pViewports)
 {
 	HookDebug("TrampolineContext::RSGetViewports()\n");
 	return orig_vtable.RSGetViewports(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pNumViewports, pViewports);
 }
 static void STDMETHODCALLTYPE TrampolineRSGetScissorRects(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumRects,
-		/* [annotation] */
-		__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
+		SAL__inout /*_range(0, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE )*/   UINT *pNumRects,
+		SAL__out_ecount_opt(*pNumRects)  D3D11_RECT *pRects)
 {
 	HookDebug("TrampolineContext::RSGetScissorRects()\n");
 	return orig_vtable.RSGetScissorRects(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  pNumRects, pRects);
 }
 static void STDMETHODCALLTYPE TrampolineHSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::HSGetShaderResources()\n");
 	return orig_vtable.HSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineHSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11HullShader **ppHullShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11HullShader **ppHullShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	HookDebug("TrampolineContext::HSGetShader()\n");
 	return orig_vtable.HSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppHullShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineHSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HookDebug("TrampolineContext::HSGetSamplers()\n");
 	return orig_vtable.HSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineHSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
 {
 	HookDebug("TrampolineContext::HSGetConstantBuffers()\n");
 	return orig_vtable.HSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineDSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
 {
 	HookDebug("TrampolineContext::DSGetShaderResources()\n");
 	return orig_vtable.DSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineDSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11DomainShader **ppDomainShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
+		SAL__out  ID3D11DomainShader **ppDomainShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances)
 {
 	HookDebug("TrampolineContext::DSGetShader()\n");
 	return orig_vtable.DSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppDomainShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineDSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
 {
 	HookDebug("TrampolineContext::DSGetSamplers()\n");
 	return orig_vtable.DSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineDSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers) {
 	HookDebug("TrampolineContext::DSGetConstantBuffers()\n");
 	return orig_vtable.DSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
 static void STDMETHODCALLTYPE TrampolineCSGetShaderResources(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot )  UINT NumViews,
-		/* [annotation] */
-		__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT - StartSlot ) const UINT NumViews,
+		SAL__out_ecount(NumViews)  ID3D11ShaderResourceView **ppShaderResourceViews) {
 	HookDebug("TrampolineContext::CSGetShaderResources()\n");
-	return orig_vtable.CSGetShaderResources(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
+	return orig_vtable.CSGetShaderResources(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this,  StartSlot, NumViews, ppShaderResourceViews);
 }
 static void STDMETHODCALLTYPE TrampolineCSGetUnorderedAccessViews(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot )  UINT NumUAVs,
-		/* [annotation] */
-		__out_ecount(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews)
-{
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_PS_CS_UAV_REGISTER_COUNT - StartSlot ) const UINT NumUAVs,
+		SAL__out_ecount(NumUAVs)  ID3D11UnorderedAccessView **ppUnorderedAccessViews) {
 	HookDebug("TrampolineContext::CSGetUnorderedAccessViews()\n");
 	return orig_vtable.CSGetUnorderedAccessViews(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumUAVs, ppUnorderedAccessViews);
 }
 static void STDMETHODCALLTYPE TrampolineCSGetShader(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__out  ID3D11ComputeShader **ppComputeShader,
-		/* [annotation] */
-		__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
-		/* [annotation] */
-		__inout_opt  UINT *pNumClassInstances)
-{
+		SAL__out  ID3D11ComputeShader **ppComputeShader,
+		SAL__out_ecount_opt(*pNumClassInstances)  ID3D11ClassInstance **ppClassInstances,
+		SAL__inout_opt  UINT *pNumClassInstances) {
 	HookDebug("TrampolineContext::CSGetShader()\n");
 	return orig_vtable.CSGetShader(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  ppComputeShader, ppClassInstances, pNumClassInstances);
 }
 static void STDMETHODCALLTYPE TrampolineCSGetSamplers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot )  UINT NumSamplers,
-		/* [annotation] */
-		__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT - StartSlot ) const UINT NumSamplers,
+		SAL__out_ecount(NumSamplers)  ID3D11SamplerState **ppSamplers) {
 	HookDebug("TrampolineContext::CSGetSamplers()\n");
-	return orig_vtable.CSGetSamplers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
+	return orig_vtable.CSGetSamplers(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this,  StartSlot, NumSamplers, ppSamplers);
 }
 static void STDMETHODCALLTYPE TrampolineCSGetConstantBuffers(ID3D11DeviceContext1 *This,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 )  UINT StartSlot,
-		/* [annotation] */
-		__in_range( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot )  UINT NumBuffers,
-		/* [annotation] */
-		__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers)
-{
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - 1 ) const UINT StartSlot,
+		_In_range_( 0, D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT - StartSlot ) const UINT NumBuffers,
+		SAL__out_ecount(NumBuffers)  ID3D11Buffer **ppConstantBuffers) {
 	HookDebug("TrampolineContext::CSGetConstantBuffers()\n");
-	return orig_vtable.CSGetConstantBuffers(((ID3D11DeviceContext1Trampoline*)This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
+	return orig_vtable.CSGetConstantBuffers(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this,  StartSlot, NumBuffers, ppConstantBuffers);
 }
-static void STDMETHODCALLTYPE TrampolineClearState(ID3D11DeviceContext1 *This)
-{
+static void STDMETHODCALLTYPE TrampolineClearState(ID3D11DeviceContext1 *This) {
 	HookDebug("TrampolineContext::ClearState()\n");
-	return orig_vtable.ClearState(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
+	return orig_vtable.ClearState(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this);
 }
-static void STDMETHODCALLTYPE TrampolineFlush(ID3D11DeviceContext1 *This)
-{
+static void STDMETHODCALLTYPE TrampolineFlush(ID3D11DeviceContext1 *This) {
 	HookDebug("TrampolineContext::Flush()\n");
-	return orig_vtable.Flush(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
+	return orig_vtable.Flush(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this);
 }
-static D3D11_DEVICE_CONTEXT_TYPE STDMETHODCALLTYPE TrampolineGetType(ID3D11DeviceContext1 *This)
-{
+static D3D11_DEVICE_CONTEXT_TYPE STDMETHODCALLTYPE TrampolineGetType(ID3D11DeviceContext1 *This) {
 	HookDebug("TrampolineContext::GetType()\n");
-	return orig_vtable.GetType(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
+	return orig_vtable.GetType(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this);
 }
-static UINT STDMETHODCALLTYPE TrampolineGetContextFlags(ID3D11DeviceContext1 *This)
-{
+static UINT STDMETHODCALLTYPE TrampolineGetContextFlags(ID3D11DeviceContext1 *This) {
 	HookDebug("TrampolineContext::GetContextFlags()\n");
-	return orig_vtable.GetContextFlags(((ID3D11DeviceContext1Trampoline*)This)->orig_this);
+	return orig_vtable.GetContextFlags(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this);
 }
 static HRESULT STDMETHODCALLTYPE TrampolineFinishCommandList(ID3D11DeviceContext1 *This,
-		BOOL RestoreDeferredContextState,
-		/* [annotation] */
-		__out_opt  ID3D11CommandList **ppCommandList)
-{
+		const BOOL RestoreDeferredContextState,
+		SAL__out_opt  ID3D11CommandList **ppCommandList) {
 	HookDebug("TrampolineContext::FinishCommandList()\n");
-	return orig_vtable.FinishCommandList(((ID3D11DeviceContext1Trampoline*)This)->orig_this, RestoreDeferredContextState, ppCommandList);
+	return orig_vtable.FinishCommandList(reinterpret_cast<ID3D11DeviceContext1Trampoline *>(This)->orig_this, RestoreDeferredContextState, ppCommandList);
 }
 
-static CONST_VTBL struct ID3D11DeviceContext1Vtbl trampoline_vtable = {
+static CONST_VTBL ID3D11DeviceContext1Vtbl trampoline_vtable = {
 	TrampolineQueryInterface,
 	TrampolineAddRef,
 	TrampolineRelease,
@@ -3537,7 +2882,7 @@ static CONST_VTBL struct ID3D11DeviceContext1Vtbl trampoline_vtable = {
 
 ID3D11DeviceContext1* hook_context(ID3D11DeviceContext1 *orig_context, ID3D11DeviceContext1 *hacker_context)
 {
-	ID3D11DeviceContext1Trampoline *trampoline_context = new ID3D11DeviceContext1Trampoline();
+	auto *trampoline_context = new ID3D11DeviceContext1Trampoline();
 	trampoline_context->lpVtbl = &trampoline_vtable;
 	trampoline_context->orig_this = orig_context;
 
@@ -3546,5 +2891,5 @@ ID3D11DeviceContext1* hook_context(ID3D11DeviceContext1 *orig_context, ID3D11Dev
 	context_map[orig_context] = hacker_context;
 	LeaveCriticalSection(&context_map_lock);
 
-	return (ID3D11DeviceContext1*)trampoline_context;
+	return reinterpret_cast<ID3D11DeviceContext1 *>(trampoline_context);
 }

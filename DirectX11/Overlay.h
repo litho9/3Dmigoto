@@ -118,5 +118,5 @@ public:
 };
 
 void ClearNotices();
-void LogOverlayW(LogLevel level, wchar_t *fmt, ...);
-void LogOverlay(LogLevel level, char *fmt, ...);
+void LogOverlayW(LogLevel level, const wchar_t *fmt, ...);
+void LogOverlay(LogLevel level, const char *fmt, ...);

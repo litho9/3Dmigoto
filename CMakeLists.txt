@@ -1,0 +1,116 @@
+cmake_minimum_required(VERSION 3.30)
+project(3Dmigoto)
+
+set(CMAKE_CXX_STANDARD 20)
+
+include_directories(.)
+include_directories(BinaryDecompiler/include)
+include_directories(BinaryDecompiler/internal_includes)
+include_directories(crc32c-hw-1.0.5/include)
+include_directories(D3D_Shaders)
+include_directories(D3DCompiler)
+include_directories(DirectX11)
+include_directories(HLSLDecompiler)
+include_directories(HLSLDecompiler/cmd_Decompiler)
+include_directories(Injector)
+include_directories(Nektra)
+include_directories(NVAPI)
+include_directories(pcre2)
+
+add_executable(3Dmigoto
+    BinaryDecompiler/include/hlslcc.h
+    BinaryDecompiler/include/hlslcc.hpp
+    BinaryDecompiler/internal_includes/debug.h
+    BinaryDecompiler/internal_includes/decode.h
+    BinaryDecompiler/internal_includes/languages.h
+    BinaryDecompiler/internal_includes/reflect.h
+    BinaryDecompiler/internal_includes/shaderLimits.h
+    BinaryDecompiler/internal_includes/structs.h
+    BinaryDecompiler/internal_includes/tokens.h
+    BinaryDecompiler/internal_includes/tokensDX9.h
+    BinaryDecompiler/decode.cpp
+    BinaryDecompiler/decodeDX9.cpp
+    BinaryDecompiler/reflect.cpp
+    crc32c-hw-1.0.5/include/crc32c.h
+    crc32c-hw-1.0.5/src/crc32c.cpp
+    crc32c-hw-1.0.5/src/generated-constants.cpp
+    D3D_Shaders/Assembler.cpp
+    D3D_Shaders/Shaders.cpp
+    D3D_Shaders/SignatureParser.cpp
+    D3D_Shaders/stdafx.h
+    D3D_Shaders/targetver.h
+    D3DCompiler/d3dcWrapper.cpp
+    D3DCompiler/d3dcWrapper.h
+    DirectX11/CommandList.cpp
+    DirectX11/CommandList.h
+    DirectX11/cursor.cpp
+    DirectX11/cursor.h
+    DirectX11/D3D11Wrapper.cpp
+    DirectX11/D3D11Wrapper.h
+    DirectX11/DLLMainHook.cpp
+    DirectX11/DLLMainHook.h
+    DirectX11/DrawCallInfo.h
+    DirectX11/FrameAnalysis.cpp
+    DirectX11/FrameAnalysis.h
+    DirectX11/globals.h
+    DirectX11/HackerContext.cpp
+    DirectX11/HackerContext.h
+    DirectX11/HackerDevice.cpp
+    DirectX11/HackerDevice.h
+    DirectX11/HackerDXGI.cpp
+    DirectX11/HackerDXGI.h
+    DirectX11/HookAddresses.c
+    DirectX11/HookedContext.cpp
+    DirectX11/HookedContext.h
+    DirectX11/HookedDevice.cpp
+    DirectX11/HookedDevice.h
+    DirectX11/HookedDXGI.cpp
+    DirectX11/HookedDXGI.h
+    DirectX11/Hunting.cpp
+    DirectX11/Hunting.h
+    DirectX11/IniHandler.cpp
+    DirectX11/IniHandler.h
+    DirectX11/input.cpp
+    DirectX11/input.h
+    DirectX11/lock.cpp
+    DirectX11/lock.h
+    DirectX11/nvprofile.cpp
+    DirectX11/nvprofile.h
+    DirectX11/Overlay.cpp
+    DirectX11/Overlay.h
+    DirectX11/Override.cpp
+    DirectX11/Override.h
+    DirectX11/profiling.cpp
+    DirectX11/profiling.h
+    DirectX11/ResourceHash.cpp
+    DirectX11/ResourceHash.h
+    DirectX11/ShaderRegex.cpp
+    DirectX11/ShaderRegex.h
+    HLSLDecompiler/cmd_Decompiler/cmd_Decompiler.cpp
+    HLSLDecompiler/cmd_Decompiler/stdafx.cpp
+    HLSLDecompiler/cmd_Decompiler/stdafx.h
+    HLSLDecompiler/cmd_Decompiler/targetver.h
+    HLSLDecompiler/DecompileHLSL.cpp
+    HLSLDecompiler/DecompileHLSL.h
+    Injector/Injector.cpp
+    Injector/Injector.h
+    Injector/stdafx.cpp
+    Injector/stdafx.h
+    Injector/targetver.h
+    Nektra/NktHookLib.h
+    NVAPI/DllMain.cpp
+    NVAPI/Main.h
+    pcre2/pcre2.h
+    iid.cpp
+    ini_parser_lite.cpp
+    log.h
+    nvapi.h
+    nvstereo.h
+    PointerSet.h
+    shader.h
+    util.cpp
+    util.h
+    util_min.h
+    version.h
+    vkeys.h
+    DirectXTK/Inc/ScreenGrab.h)
