@@ -113,4 +113,5 @@ add_executable(3Dmigoto
     util_min.h
     version.h
     vkeys.h
-    DirectXTK/Inc/ScreenGrab.h)
+    DirectXTK/Inc/ScreenGrab.h
+        DirectX11/elp.cpp)

@@ -12,6 +12,7 @@
 #include <locale>
 #include <ranges>
 #include <bits/regex.h>
+#include <functional>
 
 #include "log.h"
 #include "Globals.h"
@@ -84,6 +85,11 @@ static wstring toLowerCase(wstring str) {
 	ranges::transform(str, str.begin(), towlower);
 	return str;
 }
+wstring get_filename(const HINSTANCE handle = nullptr) {
+	wchar_t path[MAX_PATH];
+	GetModuleFileNameW(handle, path, MAX_PATH);
+	return wstring(path);
+}
 wstring get_path(const HINSTANCE handle = nullptr) {
 	wchar_t path[MAX_PATH];
 	GetModuleFileNameW(handle, path, MAX_PATH);
@@ -100,7 +106,7 @@ static bool whitelisted_duplicate_key(const wchar_t *section, const wchar_t *key
 	return !_wcsnicmp(section, L"key", 3) && (!_wcsicmp(key, L"key") || !_wcsicmp(key, L"back")) || !_wcsicmp(section, L"include");
 }
 
-static bool SectionInList(const wchar_t *section, Section section_list[]) {
+static bool SectionInList(const wchar_t *section, const Section section_list[]) {
 	for (auto s : section_list)
 		if (s.prefix && !_wcsnicmp(section, s.section, wcslen(s.section)) || !_wcsicmp(section, s.section))
 			return true;
@@ -131,14 +137,11 @@ struct WStringInsensitiveLess {
 // Case-insensitive version of the wstring hashing and equality functions for
 // case-insensitive maps that we can use to look up ini sections and keys:
 struct WStringInsensitiveHash {
-	size_t operator()(const wstring &s) const
-	{
-		std::wstring l;
-		constexpr std::hash<std::wstring> whash;
-
+	size_t operator()(const wstring &s) const {
+		wstring l;
 		l.resize(s.size());
-		std::transform(s.begin(), s.end(), l.begin(), towlower);
-		return whash(l);
+		ranges::transform(s, l.begin(), towlower);
+		return hash<wstring>()(l);
 	}
 };
 struct WStringInsensitiveEquality {
@@ -243,64 +246,6 @@ static wstring _get_namespaced_section_path(const IniSection *entry) {
 	return pos == wstring::npos ? L"" : ret.substr(0, pos + 1);
 }
 
-static void ParseIniSectionLine(wstring *wline, wstring *section, int *warn_duplicates, bool *warn_lines_without_equals,
-		IniSectionVector **section_vector, const wstring *ini_namespace, const wstring *ini_path) {
-	// To match the behaviour of GetPrivateProfileString, we use up until the first ] as the section name.
-	// If there is no ] character, we use the rest of the line.
-	size_t last = wline->find(L']');
-	if (last == std::basic_string<wchar_t>::npos)
-		last = wline->length();
-
-	// Strip whitespace:
-	const size_t first = wline->find_first_not_of(L" \t", 1);
-	last = wline->find_last_not_of(L" \t", last - 1);
-	*section = wline->substr(first, last - first + 1);
-
-	// Config files aside from the main one are namespaced to reduce the potential of mod conflicts.
-	// Only sections that have prefixes can be namespaced, since global sections are always global,
-	// but we do allow these config files to append/override values in global sections:
-	*warn_duplicates = 1;
-	bool namespaced_section = false;
-	bool allow_duplicate_sections = false;
-	if (!ini_namespace->empty()) {
-		if (get_namespaced_section_name(section, ini_namespace, section)) {
-			namespaced_section = true;
-		} else {
-			allow_duplicate_sections = true;
-			*warn_duplicates = 2;
-		}
-	}
-
-	// If we find a duplicate section we only parse the first one to match the behaviour of GetPrivateProfileString.
-	if (!ini_sections.emplace(*section, IniSection{}).second && !allow_duplicate_sections) {
-		IniWarning("WARNING: Duplicate section found in d3dx.ini: [%S]\n", section->c_str());
-		section->clear();
-		*section_vector = nullptr;
-		return;
-	}
-
-	*section_vector = &ini_sections[*section].kv_vec;
-
-	// Record the namespace so we can use it later when looking up any referenced sections.
-	// Only for namespaced sections, not global sections:
-	if (namespaced_section) {
-		ini_sections[*section].ini_namespace = *ini_namespace;
-		if (*ini_path != *ini_namespace)
-			ini_sections[*section].ini_path = *ini_path;
-	}
-
-	// Sections that utilise a command list are allowed to have duplicate keys, while other sections are not.
-	// The command list parser will still check for duplicate keys that are not part of the command list.
-	if (SectionInList(section->c_str(), CommandListSections)) {
-		if (*warn_duplicates == 1)
-			*warn_duplicates = 0;
-	} else if (!SectionInList(section->c_str(), RegularSections)) {
-		IniWarning("WARNING: Unknown section in d3dx.ini: [%S]\n", section->c_str());
-	}
-
-	*warn_lines_without_equals = SectionInList(section->c_str(), AllowLinesWithoutEquals) || SectionInList(section->c_str(), CommandListSections);
-}
-
 bool check_include_condition(const wstring *val, const wstring *ini_namespace) {
 	CommandListExpression condition;
 	wstring sbuf(*val);
@@ -321,130 +266,60 @@ bool check_include_condition(const wstring *val, const wstring *ini_namespace) {
 	return !!ret;
 }
 
-static bool ParseIniPreamble(wstring *wline, wstring *ini_namespace)
-{
-	wstring key, val;
-
-	LogInfo("      %S\n", wline->c_str());
-
-	// Key / Val pair
-	const size_t delim = wline->find(L"=");
-	if (delim != wline->npos) {
-		// Strip whitespace around delimiter:
-		const size_t last = wline->find_last_not_of(L" \t", delim - 1);
-		key = wline->substr(0, last + 1);
-		const size_t first = wline->find_first_not_of(L" \t", delim + 1);
-		if (first != wline->npos)
-			val = wline->substr(first);
-
-		if (!_wcsicmp(key.c_str(), L"condition")) {
-			return check_include_condition(&val, ini_namespace);
-		}
-
-		if (!_wcsicmp(key.c_str(), L"namespace")) {
-			LogInfo("        Renaming namespace \"%S\" -> \"%S\"\n", ini_namespace->c_str(), val.c_str());
-			*ini_namespace = val;
-			return true;
-		}
-	}
-
-	IniWarning("WARNING: d3dx.ini entry outside of section: %S\n",
-			wline->c_str());
-	return true;
+static wstring trim(const wstring& str, const wstring& of = L" \t") {
+	const auto line = wstring(str.begin(), str.end());
+	const size_t first = line.find_first_not_of(of);
+	const size_t last = line.find_last_not_of(of);
+	return line.substr(first, last - first + 1);
 }
 
-static void ParseIniKeyValLine(wstring *wline, const wstring *section,
-		const int warn_duplicates, const bool warn_lines_without_equals,
-		IniSectionVector *section_vector, const wstring *ini_namespace)
-{
-	wstring key, val;
-
-	if (section->empty() || section_vector == nullptr) {
-		IniWarning("WARNING: d3dx.ini entry outside of section: %S\n",
-				wline->c_str());
-		return;
-	}
-
-	// Key / Val pair
-	const size_t delim = wline->find(L"=");
-	if (delim != wline->npos) {
-		// Strip whitespace around delimiter:
-		const size_t last = wline->find_last_not_of(L" \t", delim - 1);
-		key = wline->substr(0, last + 1);
-		const size_t first = wline->find_first_not_of(L" \t", delim + 1);
-		if (first != wline->npos)
-			val = wline->substr(first);
-
-		if (warn_duplicates == 2) {
-			// Recursively loaded config files are permitted to
-			// override values from the main d3dx.ini:
-			ini_sections.at(*section).kv_map[key] = val;
-		} else {
-			// We use "at" on the sections to access an existing
-			// section (alternatively we could use the [] operator
-			// to permit it to be created if it doesn't exist), but
-			// we use emplace within the section so that only the
-			// first item with a given key is inserted to match the
-			// behaviour of GetPrivateProfileString for duplicate
-			// keys within a single section:
-			const bool inserted = ini_sections.at(*section).kv_map.emplace(key, val).second;
-			if ((warn_duplicates == 1) && !inserted && !whitelisted_duplicate_key(section->c_str(), key.c_str())) {
-				IniWarning("WARNING: Duplicate key found in d3dx.ini: [%S] %S\n",
-						section->c_str(), key.c_str());
-			}
-		}
-	} else {
-		// No = on line, don't store in key lookup maps to
-		// match the behaviour of GetPrivateProfileString, but
-		// we will store it in the section vector structure for the
-		// profile parser to process.
-		if (warn_lines_without_equals) {
-			IniWarning("WARNING: Malformed line in d3dx.ini: [%S] \"%S\"\n",
-					section->c_str(), wline->c_str());
-			return;
-		}
-	}
-
-	section_vector->emplace_back(key, val, *wline, *ini_namespace);
-}
-
-static void ParseIniStream(istream *stream, const wstring *_ini_namespace) {
-	string aline;
-	wstring section;
-	IniSectionVector *section_vector = nullptr;
+static void ParseIniStream(istream *stream, const wstring& ini_namespace = L"") {
+	IniSection sec;
 	int warn_duplicates = 1;
-	bool warn_lines_without_equals = true;
-	bool preamble = true;
-
-	wstring ini_namespace = _ini_namespace ? *_ini_namespace : L"";
-	const wstring ini_path = ini_namespace;
-
-	while (std::getline(*stream, aline)) {
-		auto line = wstring(aline.begin(), aline.end());
-		const size_t first = line.find_first_not_of(L" \t");
-		const size_t last = line.find_last_not_of(L" \t");
-		if (first == line.npos) continue;
-		line = line.substr(first, last - first + 1);
-
-		// Comments are lines that start with a ";"
-		if (line[0] == L';') continue;
-
-		// Section?
-		if (line[0] == L'[') {
-			preamble = false;
-			ParseIniSectionLine(&line, &section, &warn_duplicates, &warn_lines_without_equals, &section_vector, &ini_namespace, &ini_path);
+	string aline;
+	while (getline(*stream, aline)) {
+		const auto line = trim(wstring(aline.begin(), aline.end()));
+		if (line[0] == L';') continue; // Comments are lines that start with a ";"
+		if (line[0] == L'[') { // Section?
+			wstring section = trim(line, L" \t[]");
+			// Config files aside from the main one are namespaced to reduce the potential of mod conflicts.
+			warn_duplicates = 1;
+			bool namespaced_section = false;
+			if (!ini_namespace.empty()) {
+				if (const wchar_t* section_prefix = SectionPrefix(&section)) {
+					section = wstring(section_prefix) + L"\\" + ini_namespace + L"\\" + section.substr(wcslen(section_prefix));
+					namespaced_section = true;
+				} else {
+					warn_duplicates = 2;
+				}
+			}
+			ini_sections[section] = sec = IniSection{};
+			// Record the namespace so we can use it later when looking up any referenced sections.
+			// Only for namespaced sections, not global sections:
+			if (namespaced_section)
+				sec.ini_namespace = ini_namespace;
+			// Sections that utilise a command list are allowed to have duplicate keys, while other sections are not.
+			// The command list parser will still check for duplicate keys that are not part of the command list.
+			if (SectionInList(section.c_str(), CommandListSections)) {
+				if (warn_duplicates == 1)
+					warn_duplicates = 0;
+			} else if (!SectionInList(section.c_str(), RegularSections)) {
+				IniWarning("WARNING: Unknown section in d3dx.ini: [%S]\n", section);
+			}
+			// warn_lines_without_equals = SectionInList(section.c_str(), AllowLinesWithoutEquals)
+			//                              || SectionInList(section.c_str(), CommandListSections);
 			continue;
 		}
-
-		if (preamble) {
-			if (!ParseIniPreamble(&line, &ini_namespace))
-				return;
+		if (sec == nullptr) {
+			IniWarning("WARNING: d3dx.ini entry outside of section: %S\n", line);
 			continue;
 		}
-
-		ParseIniKeyValLine(&line, &section, warn_duplicates,
-				   warn_lines_without_equals, section_vector,
-				   &ini_namespace);
+		if (const size_t delim = line.find(L"="); delim != line.npos) {
+			const auto key = trim(line.substr(0, delim - 1));
+			const auto val = trim(line.substr(delim + 1));
+			sec.kv_map[key] = val;
+		} else
+			sec.kv_vec.emplace_back(line, nullptr, line, ini_namespace);
 	}
 }
 
@@ -472,12 +347,7 @@ static void ParseNamespacedIniFile(const wchar_t *ini, const wstring *ini_namesp
 		LogOverlay(LOG_WARNING, "  Error opening %S\n", ini);
 		return;
 	}
-	ParseIniStream(&f, ini_namespace);
-}
-
-static void ParseIniFile(const wchar_t *ini) {
-	ini_sections.clear();
-	return ParseNamespacedIniFile(ini, nullptr);
+	ParseIniStream(&f, *ini_namespace);
 }
 
 static void InsertBuiltInIniSections() {
@@ -506,9 +376,8 @@ static void InsertBuiltInIniSections() {
 		"oD = null\n"
 	;
 
-	const char *excerpt = text;
-	istringstream stream(excerpt);
-	ParseIniStream(&stream, nullptr);
+	istringstream stream(text);
+	ParseIniStream(&stream);
 }
 
 static pcre2_code* glob_to_regex(wstring &pattern) {
@@ -545,11 +414,6 @@ static vector<pcre2_code*> globbing_vector_to_regex(vector<wstring> &globbing_pa
 	}
 
 	return ret;
-}
-
-static void free_globbing_vector(vector<pcre2_code*> &patterns) {
-	for (pcre2_code *regex : patterns)
-		pcre2_code_free(regex);
 }
 
 static bool matches_globbing_vector(const wchar_t *filename, vector<pcre2_code*> &patterns) {
@@ -608,14 +472,14 @@ static void ParseIniFilesRecursive(wchar_t *migoto_path, const wstring &rel_path
 	FindClose(hFind);
 
 	for (const wstring& i: ini_files) {
-		ini_namespace = rel_path + wstring(L"\\") + i;
+		ini_namespace = rel_path + L"\\" + i;
 		ini_path = wstring(migoto_path) + ini_namespace;
 		LogInfo("    Processing \"%S\"\n", ini_path.c_str());
 		ParseNamespacedIniFile(ini_path.c_str(), &ini_namespace);
 	}
 
 	for (const wstring& i: directories) {
-		ini_namespace = rel_path + wstring(L"\\") + i;
+		ini_namespace = rel_path + L"\\" + i;
 		ParseIniFilesRecursive(migoto_path, ini_namespace, exclude);
 	}
 }
@@ -1008,69 +872,56 @@ static int GetIniBoolIntOrEnum(const wchar_t *section, const wchar_t *key, const
 }
 
 static void ParseIncludedIniFiles() {
-	IniSections include_sections;
-	IniSectionVector *section = nullptr;
-	std::unordered_set<wstring> seen;
-	wstring rel_path;
-	vector<pcre2_code*> exclude;
-
 	const wstring migoto_path = get_path(migoto_handle);
 	G->user_config = migoto_path + L"d3dx_user.ini";
 
 	// Do this before removing [Include] from ini_sections.
-	// TODO: Allow recursively included files to modify the exclude mid-recursion:
-	exclude = globbing_vector_to_regex(GetIniStringMultipleKeys(L"Include", L"exclude_recursive"));
+	auto globbing_patterns = ini_sections[L"Include"].kv_vec
+			| views::filter([](const auto& e) { return !_wcsicmp(L"exclude_recursive", e.first.c_str()); });
+	auto exclude = transform(globbing_patterns, glob_to_regex);
 
+	unordered_set<wstring> seen;
+	IniSections include_sections;
 	do {
-		// To safely allow included files to include more files, we
-		// transfer the includes we currently know about into a
-		// separate data structure and remove them from the global
-		// ini_sections data structure. Then, after parsing more
-		// included files anything new in the ini_sections data
-		// will be included from one of the newly parsed files. We
-		// repeat this process until no more include files appear.
-		auto lower = ini_sections.lower_bound(wstring(L"Include"));
-		auto upper = prefix_upper_bound(ini_sections, wstring(L"Include"));
+		// To safely allow included files to include more files, we transfer the includes we currently know about into a
+		// separate data structure and remove them from the global ini_sections data structure.
+		// Then, after parsing more included files anything new in the ini_sections data will be included from one of the
+		// newly parsed files. We repeat this process until no more include files appear.
+		auto lower = ini_sections.lower_bound(L"Include");
+		auto upper = prefix_upper_bound(ini_sections, L"Include");
 		include_sections.clear();
 		include_sections.insert(lower, upper);
 		ini_sections.erase(lower, upper);
-
 		for (auto i = include_sections.begin(); i != include_sections.end(); ++i) {
 			const wchar_t *section_id = i->first.c_str();
 			LogInfo("[%S]\n", section_id);
 
-			wstring namespace_path = _get_namespaced_section_path(&include_sections.at(i->first));
+			// wstring namespace_path = _get_namespaced_section_path(&include_sections.at(i->first));
+			const auto entry0 = &include_sections.at(i->first);
+			const wstring ret = entry0->ini_path.empty() ? entry0->ini_namespace : entry0->ini_path;
+			const wstring::size_type pos = ret.rfind(L'\\'); // Strip the ini name from the end of the namespace
+			wstring namespace_path = pos == wstring::npos ? L"" : ret.substr(0, pos + 1);
 
-			_GetIniSection(&include_sections, &section, section_id);
-			for (auto entry = section->begin(); entry < section->end(); ++entry) {
-				const auto c_str = entry->first.c_str();
-				LogInfo("  %S=%S\n", c_str, entry->second.c_str());
-				rel_path = namespace_path + entry->second;
-
-				// This is not a strong protection against including the same file multiple times,
-				// but it is intended to ensure that this do-while loop will eventually terminate.
-				if (seen.count(rel_path)) {
+			for (auto entry : include_sections.at(section_id).kv_vec) {
+				LogInfo("  %S=%S\n", entry.first.c_str(), entry.second.c_str());
+				wstring rel_path = namespace_path + entry.second;
+				if (seen.contains(rel_path)) { // ensure that this do-while terminates
 					IniWarning("WARNING: File included multiple times: %S\n", rel_path.c_str());
 					continue;
 				}
 				seen.insert(rel_path);
 
-				if (!wcscmp(c_str, L"include")) {
+				if (!wcscmp(entry.first.c_str(), L"include")) {
 					ParseNamespacedIniFile((migoto_path + rel_path).c_str(), &rel_path);
-				} else if (!wcscmp(c_str, L"include_recursive")) {
+				} else if (!wcscmp(entry.first.c_str(), L"include_recursive")) {
 					ParseIniFilesRecursive(migoto_path, rel_path, exclude);
-				} else if (!wcscmp(c_str, L"exclude_recursive")) {
-					// Handled above
-				} else if (!wcscmp(c_str, L"user_config")) {
-					// Handled below
-				} else {
-					IniWarning("WARNING: Unrecognised entry: %S=%S\n", c_str, rel_path.c_str());
 				}
 			}
 		}
 	} while (!include_sections.empty());
 
-	free_globbing_vector(exclude);
+	for (pcre2_code *regex : exclude)
+		pcre2_code_free(regex);
 
 	// User config is loaded very last to allow it to override all other ini files.
 	const DWORD attrib = GetFileAttributes(G->user_config.c_str());
@@ -3600,66 +3451,29 @@ static void ForceFullScreen(HackerDevice *device, void *private_data)
 	swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
 }
 
-static void warn_of_conflicting_d3dx(wchar_t *dll_ini_path)
-{
-	wchar_t exe_ini_path[MAX_PATH];
-
-	if (!GetModuleFileName(NULL, exe_ini_path, MAX_PATH))
-		return;
-	wcsrchr(exe_ini_path, L'\\')[1] = 0;
-	wcscat(exe_ini_path, L"d3dx.ini");
-
-	if (!wcscmp(dll_ini_path, exe_ini_path))
-		return;
-
-	const DWORD attrib = GetFileAttributes(exe_ini_path);
-	if (attrib == INVALID_FILE_ATTRIBUTES)
-		return;
-
-	LogOverlay(LOG_WARNING, "Detected a conflicting d3dx.ini in the game directory that is not being used.\n"
-			"Using this configuration: %S\n", dll_ini_path);
-}
-
 void LoadConfigFile() {
-	// wstring iniFile;
-	wchar_t iniFile[MAX_PATH];
-	wchar_t logFilename[MAX_PATH];
 	wchar_t setting[MAX_PATH];
-
 	G->gInitialized = true;
 
-	if (!GetModuleFileNameW(migoto_handle, iniFile, MAX_PATH))
-		DoubleBeepExit();
-	wcsrchr(iniFile, L'\\')[1] = 0;
-	wcscpy(logFilename, iniFile);
-	wcscat(iniFile, INI_FILENAME);
-	wcscat(logFilename, L"d3d11_log.txt");
-	warn_of_conflicting_d3dx(iniFile);
+	const wstring dll_path = get_filename(migoto_handle); // d3d11.dll
+	const wstring exe_path = get_filename(); // game.exe
+	const wstring path = dll_path.substr(0, dll_path.rfind(L"\\"));
+	const wstring logFilename = path + L"d3d11_log.txt";
+	const wstring iniFile = path + INI_FILENAME; // d3dx.ini
 
-	// Log all settings that are _enabled_, in order,
-	// so that there is no question what settings we are using.
-
-	// [Logging]
-	// Not using the helper function for this one since logging isn't enabled yet
-	if (GetPrivateProfileInt(L"Logging", L"calls", 1, iniFile))
-	{
-		if (!LogFile)
-			LogFile = _wfsopen(logFilename, L"w", _SH_DENYNO);
-		LogInfo("\nD3D11 DLL starting init - v %s - %s\n", VER_FILE_VERSION_STR, LogTime().c_str());
-
-		wchar_t our_path[MAX_PATH], exe_path[MAX_PATH];
-		GetModuleFileName(migoto_handle, our_path, MAX_PATH);
-		GetModuleFileName(NULL, exe_path, MAX_PATH);
-		LogInfo("Game path: %S\n"
-			"3DMigoto path: %S\n\n",
-			exe_path, our_path);
-
-		LogInfoW(L"----------- " INI_FILENAME L" settings -----------\n");
-	}
+	if (!LogFile) LogFile = _wfsopen(logFilename, L"w", _SH_DENYNO);
+	LogInfo("D3D11 DLL starting init - v %s - %s\n", VER_FILE_VERSION_STR, LogTime().c_str());
+	LogInfo("Game path: %S\n3DMigoto path: %S\n\n",	exe_path.c_str(), dll_path.c_str());
+	LogInfoW(L"----------- " INI_FILENAME L" settings -----------\n");
 	LogInfo("[Logging]\n");
 	LogInfo("  calls=1\n");
 
-	ParseIniFile(iniFile);
+	ini_sections.clear();
+	// ParseNamespacedIniFile(iniFile, nullptr);
+	ifstream f(iniFile, ios::in, _SH_DENYNO);
+	if (!f) { LogOverlay(LOG_WARNING, "  Error opening %S\n", iniFile); return; }
+	ParseIniStream(&f);
+
 	InsertBuiltInIniSections();
 
 	G->gLogInput = GetIniBool(L"Logging", L"input", false, nullptr);
@@ -3667,15 +3481,13 @@ void LoadConfigFile() {
 
 	// Unbuffered logging to remove need for fflush calls, and r/w access to make it easy
 	// to open active files.
-	if (LogFile && GetIniBool(L"Logging", L"unbuffered", false, nullptr))
-	{
+	if (LogFile && GetIniBool(L"Logging", L"unbuffered", false, nullptr)) {
 		const int unbuffered = setvbuf(LogFile, nullptr, _IONBF, 0);
 		LogInfo("    unbuffered return: %d\n", unbuffered);
 	}
 
 	// Set the CPU affinity based upon d3dx.ini setting.  Useful for debugging and shader hunting in AC3.
-	if (GetIniBool(L"Logging", L"force_cpu_affinity", false, nullptr))
-	{
+	if (GetIniBool(L"Logging", L"force_cpu_affinity", false, nullptr)) {
 		constexpr DWORD one = 0x01;
 		const BOOL affinity = SetProcessAffinityMask(GetCurrentProcess(), one);
 		LogInfo("    force_cpu_affinity return: %s\n", affinity ? "true" : "false");
@@ -3683,12 +3495,8 @@ void LoadConfigFile() {
 
 	// If specified in Logging section, wait for Attach to Debugger.
 	int debugger = GetIniInt(L"Logging", L"waitfordebugger", 0, nullptr);
-	if (debugger > 0)
-	{
-		do
-		{
-			Sleep(250);
-		} while (!IsDebuggerPresent());
+	if (debugger > 0) {
+		do { Sleep(250); } while (!IsDebuggerPresent());
 		if (debugger > 1)
 			__debugbreak();
 	}
@@ -3702,8 +3510,7 @@ void LoadConfigFile() {
 	if (GetIniBool(L"Logging", L"debug_locks", false, nullptr))
 		enable_lock_dependency_checks();
 
-	// [Include]
-	ParseIncludedIniFiles();
+	ParseIncludedIniFiles(); // [Include]
 
 	// [System]
 	LogInfo("[System]\n");
@@ -4022,8 +3829,9 @@ void LoadProfileManagerConfig(const wchar_t *config_dir)
 	}
 	LogInfo("[Logging]\n");
 	LogInfo("  calls=1\n");
-
-	ParseIniFile(iniFile);
+	const wchar_t *ini = iniFile;
+	ini_sections.clear();
+	ParseNamespacedIniFile(ini, nullptr);
 
 	gLogDebug = GetIniBool(L"Logging", L"debug", false, nullptr);
 

@@ -47,7 +47,7 @@ extern "C" HRESULT(__stdcall *fnOrigCreateDXGIFactory2)(
 void override_swap_chain(DXGI_SWAP_CHAIN_DESC *pDesc, DXGI_SWAP_CHAIN_DESC *origSwapChainDesc);
 void wrap_swap_chain(HackerDevice *hackerDevice,
 		IDXGISwapChain **ppSwapChain,
-		DXGI_SWAP_CHAIN_DESC *overrideSwapChainDesc,
+		const DXGI_SWAP_CHAIN_DESC *overrideSwapChainDesc,
 		DXGI_SWAP_CHAIN_DESC *origSwapChainDesc);
 
 // Called from HookedDXGI

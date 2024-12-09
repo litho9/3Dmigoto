@@ -1202,8 +1202,7 @@ int parse_ini_profile_line(wstring *lhs, wstring *rhs)
 	return 0;
 }
 
-void log_nv_driver_version()
-{
+void log_nv_driver_version() {
 	NvU32 version;
 	NvAPI_ShortString branch;
 	NvAPI_Status status = NVAPI_OK;

@@ -60,30 +60,20 @@ LPVOID lpvtbl_CreateSwapChainForComposition(IDXGIFactory2* pFactory2)
 	return pFactory2->lpVtbl->CreateSwapChainForComposition;
 }
 
-LPVOID lpvtbl_CreateSwapChainForCoreWindow(IDXGIFactory2* pFactory2)
-{
+LPVOID lpvtbl_CreateSwapChainForCoreWindow(IDXGIFactory2* pFactory2) {
 	if (!pFactory2)
 		return NULL;
 
 	return pFactory2->lpVtbl->CreateSwapChainForCoreWindow;
 }
 
-LPVOID lpvtbl_Present(IDXGISwapChain* pSwapChain)
-{
-	if (!pSwapChain)
-		return NULL;
-
-	return pSwapChain->lpVtbl->Present;
+LPVOID lpvtbl_Present(IDXGISwapChain* pSwapChain) {
+	return !pSwapChain ? NULL : pSwapChain->lpVtbl->Present;
 }
 
-LPVOID lpvtbl_Present1(IDXGISwapChain1* pSwapChain1)
-{
-	if (!pSwapChain1)
-		return NULL;
-
-	return pSwapChain1->lpVtbl->Present1;
+LPVOID lpvtbl_Present1(const IDXGISwapChain1* pSwapChain1) {
+	return !pSwapChain1 ? NULL : pSwapChain1->lpVtbl->Present1;
 }
-
 
 
 #undef CINTERFACE

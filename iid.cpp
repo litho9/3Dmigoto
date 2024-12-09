@@ -281,21 +281,12 @@ static void check_interface(IUnknown *unknown, REFIID riid, char *iid_name, IUnk
 		LogDebug("  %s not supported\n", iid_name);
 }
 
-void analyse_iunknown(IUnknown *unknown)
-{
-	IUnknown *canonical;
-	int i;
-
-	if (!unknown)
-		return;
-
+void analyse_iunknown(IUnknown *unknown) {
+	if (!unknown) return;
 	LogInfo("Checking what interfaces %p supports...\n", unknown);
-
-	canonical = _check_interface(unknown, IID_IUnknown);
-
-	for (i = 0; i < ARRAYSIZE(known_interfaces); i++)
+	IUnknown *canonical = _check_interface(unknown, IID_IUnknown);
+	for (int i = 0; i < std::size(known_interfaces); i++)
 		check_interface(unknown, known_interfaces[i].iid, known_interfaces[i].name, canonical);
-
 #ifndef NTDDI_WINBLUE
 	LogInfo("  Win 8.1 interfaces not checked (3DMigoto built with old SDK)\n");
 #endif

@@ -9,26 +9,20 @@
 #define COMPILER_DLL_VERSION "46"
 #define COMPILER_DLL_VERSIONL L"46"
 
-// Standalone DLL needs its own log file reference, as log.h just exports them.
 bool gLogDebug = false;
-FILE *LogFile = 0;
-
+FILE *LogFile = nullptr; // Standalone DLL needs its own log file reference, as log.h just exports them.
 static bool gInitialized = false;
-
 static bool EXPORT_SHADERS = false;
 static wchar_t SHADER_PATH[MAX_PATH] = { 0 };
 
 using namespace std;
 
 
-
-void InitializeDLL()
-{
-	if (!gInitialized)
-	{
+void InitializeDLL() {
+	if (!gInitialized) {
 		gInitialized = true;
 		wchar_t dir[MAX_PATH];
-		GetModuleFileName(0, dir, MAX_PATH);
+		GetModuleFileNameW(0, dir, MAX_PATH);
 		wcsrchr(dir, L'\\')[1] = 0;
 		wcscat(dir, L"d3dx.ini");
 		LogFile = GetPrivateProfileInt(L"Logging", L"calls", 0, dir) ? (FILE *)-1 : 0;
@@ -815,47 +809,19 @@ HRESULT WINAPI D3DReflectCode(GUID *interfaceId,
 }
 
 
-// We need to get control as early as possible in order to pre-load our 
-// d3d11 and nvapi64 dlls.  This will get called at static load time to
-// get us hooked into place.  
-//
+// We need to get control as early as possible in order to pre-load our d3d11 and nvapi64 dlls.
+// This will get called at static load time to get us hooked into place.
 // Be Careful of the restrictions on this entry point. No LogInfo e.g.
-
-BOOL WINAPI DllMain(
-	_In_  HINSTANCE hinstDLL,
-	_In_  DWORD fdwReason,
-	_In_  LPVOID lpvReserved)
-{
-	bool result = true;
-
-	//bool waitfordebugger = false;
-	//waitfordebugger = true;
-	//do
-	//{
-	//	Sleep(250);
-	//} while (!IsDebuggerPresent());
-	//__debugbreak();
-
-	switch (fdwReason)
-	{
-	case DLL_PROCESS_ATTACH:
-	{
-		wchar_t localPath[MAX_PATH] = L"d3d11.dll";
-		hD3D11 = LoadLibrary(localPath);
-		break;
+BOOL WINAPI DllMain( _In_  HINSTANCE hinstDLL, _In_ const DWORD fdwReason, _In_  LPVOID lpvReserved) {
+	switch (fdwReason) {
+	case DLL_PROCESS_ATTACH: {
+		constexpr wchar_t localPath[MAX_PATH] = L"d3d11.dll";
+		hD3D11 = LoadLibraryW(localPath);
+		// break;
 	}
-
-	case DLL_PROCESS_DETACH:
-		break;
-
-	case DLL_THREAD_ATTACH:
-		// Do thread-specific initialization.
-		break;
-
-	case DLL_THREAD_DETACH:
-		// Do thread-specific cleanup.
-		break;
+	// case DLL_PROCESS_DETACH: break;
+	// case DLL_THREAD_ATTACH: break; // Do thread-specific initialization.
+	// case DLL_THREAD_DETACH: break; // Do thread-specific cleanup.
 	}
-
-	return result;
+	return true;
 }

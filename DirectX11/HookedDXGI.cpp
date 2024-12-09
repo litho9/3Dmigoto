@@ -57,12 +57,12 @@
 
 static HackerDevice* prepare_devices_for_dx12_warning(IUnknown *unknown_device)
 {
-	ID3D12CommandQueue *d3d12_queue = NULL;
-	ID3D12Device *d3d12_device = NULL;
-	ID3D11Device *d3d11_device = NULL;
-	ID3D11DeviceContext *d3d11_context = NULL;
-	HackerDevice *dev_wrap = NULL;
-	HackerContext *context_wrap = NULL;
+	ID3D12CommandQueue *d3d12_queue = nullptr;
+	ID3D12Device *d3d12_device = nullptr;
+	ID3D11Device *d3d11_device = nullptr;
+	ID3D11DeviceContext *d3d11_context = nullptr;
+	HackerDevice *dev_wrap = nullptr;
+	HackerContext *context_wrap = nullptr;
 	HRESULT hr;
 
 	if (FAILED(unknown_device->QueryInterface(IID_ID3D12CommandQueue, (void**)&d3d12_queue)))
@@ -81,11 +81,11 @@ static HackerDevice* prepare_devices_for_dx12_warning(IUnknown *unknown_device)
 	// panel's registry key override we'd need to go to more heroics.
 	hr = (*_D3D11On12CreateDevice)(d3d12_device,
 			0, /* flags */
-			NULL, 0, /* feature levels */
+			nullptr, 0, /* feature levels */
 			(IUnknown**)&d3d12_queue,
 			1, /* num queues */
 			0, /* node mask */
-			&d3d11_device, &d3d11_context, NULL);
+			&d3d11_device, &d3d11_context, nullptr);
 	if (FAILED(hr)) {
 		LogInfo("D3D11On12CreateDevice failed: 0x%x\n", hr);
 		goto out;
@@ -255,7 +255,7 @@ void ForceDisplayMode(DXGI_MODE_DESC *BufferDesc)
 
 static void ForceDisplayParams(DXGI_SWAP_CHAIN_DESC *pDesc)
 {
-	if (pDesc == NULL)
+	if (pDesc == nullptr)
 		return;
 
 	LogInfo("     Windowed = %d\n", pDesc->Windowed);
@@ -293,7 +293,7 @@ static void ForceDisplayParams(DXGI_SWAP_CHAIN_DESC *pDesc)
 // Batman Telltale needs this.
 // The rest of the variants are less clear.
 
-static void ForceDisplayParams1(DXGI_SWAP_CHAIN_DESC1 *pDesc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc)
+static void ForceDisplayParams1(const DXGI_SWAP_CHAIN_DESC1 *pDesc, DXGI_SWAP_CHAIN_FULLSCREEN_DESC *pFullscreenDesc)
 {
 	if (pFullscreenDesc) {
 		LogInfo("     Windowed = %d\n", pFullscreenDesc->Windowed);
@@ -432,13 +432,11 @@ static void override_factory2_swap_chain(
 
 void wrap_swap_chain(HackerDevice *hackerDevice,
 		IDXGISwapChain **ppSwapChain,
-		DXGI_SWAP_CHAIN_DESC *overrideSwapChainDesc,
-		DXGI_SWAP_CHAIN_DESC *origSwapChainDesc)
-{
-	HackerContext *hackerContext = NULL;
-	HackerSwapChain *swapchainWrap = NULL;
-	IDXGISwapChain1 *origSwapChain = NULL;
-
+		const DXGI_SWAP_CHAIN_DESC *overrideSwapChainDesc,
+		DXGI_SWAP_CHAIN_DESC *origSwapChainDesc) {
+	HackerContext *hackerContext = nullptr;
+	HackerSwapChain *swapchainWrap = nullptr;
+	IDXGISwapChain1 *origSwapChain = nullptr;
 	if (!hackerDevice || !ppSwapChain || !*ppSwapChain)
 		return;
 
@@ -456,20 +454,15 @@ void wrap_swap_chain(HackerDevice *hackerDevice,
 
 	// Original swapchain has been successfully created. Now we want to
 	// wrap the returned swapchain as either HackerSwapChain or HackerUpscalingSwapChain.
-
-	if (G->SCREEN_UPSCALING == 0)		// Normal case
-	{
+	if (G->SCREEN_UPSCALING == 0) { // Normal case
 		swapchainWrap = new HackerSwapChain(origSwapChain, hackerDevice, hackerContext);
 		LogInfo("  HackerSwapChain %p created to wrap %p\n", swapchainWrap, origSwapChain);
-	}
-	else								// Upscaling case
-	{
+	} else { // Upscaling case
 		swapchainWrap = new HackerUpscalingSwapChain(origSwapChain, hackerDevice, hackerContext,
 			origSwapChainDesc, overrideSwapChainDesc->BufferDesc.Width, overrideSwapChainDesc->BufferDesc.Height);
 		LogInfo("  HackerUpscalingSwapChain %p created to wrap %p.\n", swapchainWrap, origSwapChain);
 
-		if (G->SCREEN_UPSCALING == 2 || !origSwapChainDesc->Windowed)
-		{
+		if (G->SCREEN_UPSCALING == 2 || !origSwapChainDesc->Windowed) {
 			// Some games react very strange (like render nothing) if set full screen state is called here)
 			// Other games like The Witcher 3 need the call to ensure entering the full screen on start
 			// (seems to be game internal stuff)  ToDo: retest if this is still necessary, lots of changes.
@@ -493,9 +486,9 @@ static void wrap_factory2_swap_chain(
 		_In_ HackerDevice *hackerDevice,
 		_Out_ IDXGISwapChain1 **ppSwapChain)
 {
-	HackerContext *hackerContext = NULL;
-	HackerSwapChain *hackerSwapChain = NULL;
-	IDXGISwapChain1 *origSwapChain = NULL;
+	HackerContext *hackerContext = nullptr;
+	HackerSwapChain *hackerSwapChain = nullptr;
+	IDXGISwapChain1 *origSwapChain = nullptr;
 
 	if (!hackerDevice)
 		return;
@@ -562,7 +555,7 @@ HRESULT __stdcall Hooked_CreateSwapChainForHwnd(
 		return fnOrigCreateSwapChainForHwnd(This, pDevice, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
 	}
 
-	HackerDevice *hackerDevice = NULL;
+	HackerDevice *hackerDevice = nullptr;
 	DXGI_SWAP_CHAIN_DESC1 descCopy = { 0 };
 	DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreenCopy = { 0 };
 
@@ -639,7 +632,7 @@ HRESULT __stdcall Hooked_CreateSwapChainForCoreWindow(
 		return fnOrigCreateSwapChainForCoreWindow(This, pDevice, pWindow, pDesc, pRestrictToOutput, ppSwapChain);
 	}
 
-	HackerDevice *hackerDevice = NULL;
+	HackerDevice *hackerDevice = nullptr;
 	DXGI_SWAP_CHAIN_DESC1 descCopy = { 0 };
 
 	LogInfo("*** Hooked IDXGIFactory2::CreateSwapChainForCoreWindow(%p) called\n", This);
@@ -651,7 +644,7 @@ HRESULT __stdcall Hooked_CreateSwapChainForCoreWindow(
 
 	hackerDevice = sort_out_swap_chain_device_mess(&pDevice);
 
-	override_factory2_swap_chain(&pDesc, &descCopy, NULL);
+	override_factory2_swap_chain(&pDesc, &descCopy, nullptr);
 
 	get_tls()->hooking_quirk_protection = true;
 	HRESULT hr = fnOrigCreateSwapChainForCoreWindow(This, pDevice, pWindow, pDesc, pRestrictToOutput, ppSwapChain);
@@ -703,7 +696,7 @@ HRESULT __stdcall Hooked_CreateSwapChainForComposition(
 		return fnOrigCreateSwapChainForComposition(This, pDevice, pDesc, pRestrictToOutput, ppSwapChain);
 	}
 
-	HackerDevice *hackerDevice = NULL;
+	HackerDevice *hackerDevice = nullptr;
 	DXGI_SWAP_CHAIN_DESC1 descCopy = { 0 };
 
 	LogInfo("*** Hooked IDXGIFactory2::CreateSwapChainForComposition(%p) called\n", This);
@@ -715,7 +708,7 @@ HRESULT __stdcall Hooked_CreateSwapChainForComposition(
 
 	hackerDevice = sort_out_swap_chain_device_mess(&pDevice);
 
-	override_factory2_swap_chain(&pDesc, &descCopy, NULL);
+	override_factory2_swap_chain(&pDesc, &descCopy, nullptr);
 
 	get_tls()->hooking_quirk_protection = true;
 	HRESULT hr = fnOrigCreateSwapChainForComposition(This, pDevice, pDesc, pRestrictToOutput, ppSwapChain);
@@ -846,7 +839,7 @@ HRESULT __stdcall Hooked_CreateSwapChain(
 	LogInfo("  SwapChain = %p\n", ppSwapChain);
 	LogInfo("  Description = %p\n", pDesc);
 
-	HackerDevice *hackerDevice = NULL;
+	HackerDevice *hackerDevice = nullptr;
 	DXGI_SWAP_CHAIN_DESC origSwapChainDesc;
 
 	hackerDevice = sort_out_swap_chain_device_mess(&pDevice);
@@ -926,7 +919,7 @@ HRESULT __stdcall Hooked_CreateDXGIFactory(REFIID riid, void **ppFactory)
 	if (riid == __uuidof(IDXGIFactory2) && !G->enable_platform_update)
 	{
 		LogInfo("  returns E_NOINTERFACE as error for IDXGIFactory2.\n");
-		*ppFactory = NULL;
+		*ppFactory = nullptr;
 		return E_NOINTERFACE;
 	}
 
@@ -996,7 +989,7 @@ HRESULT __stdcall Hooked_CreateDXGIFactory1(REFIID riid, void **ppFactory1)
 	if (riid == __uuidof(IDXGIFactory2) && !G->enable_platform_update)
 	{
 		LogInfo("  returns E_NOINTERFACE as error for IDXGIFactory2.\n");
-		*ppFactory1 = NULL;
+		*ppFactory1 = nullptr;
 		return E_NOINTERFACE;
 	}
 
@@ -1061,7 +1054,7 @@ HRESULT __stdcall Hooked_CreateDXGIFactory2(UINT Flags, REFIID riid, void **ppFa
 	if (riid == __uuidof(IDXGIFactory2) && !G->enable_platform_update)
 	{
 		LogInfo("  returns E_NOINTERFACE as error for IDXGIFactory2.\n");
-		*ppFactory2 = NULL;
+		*ppFactory2 = nullptr;
 		return E_NOINTERFACE;
 	}
 
